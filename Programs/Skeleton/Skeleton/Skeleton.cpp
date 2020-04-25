@@ -1,25 +1,8 @@
 //=============================================================================================
-// Mintaprogram: Zöld háromszög. Ervenyes 2019. osztol.
-//
-// A beadott program csak ebben a fajlban lehet, a fajl 1 byte-os ASCII karaktereket tartalmazhat, BOM kihuzando.
-// Tilos:
-// - mast "beincludolni", illetve mas konyvtarat hasznalni
-// - faljmuveleteket vegezni a printf-et kiveve
-// - Mashonnan atvett programresszleteket forrasmegjeloles nelkul felhasznalni es
-// - felesleges programsorokat a beadott programban hagyni!!!!!!! 
-// - felesleges kommenteket a beadott programba irni a forrasmegjelolest kommentjeit kiveve
-// ---------------------------------------------------------------------------------------------
-// A feladatot ANSI C++ nyelvu forditoprogrammal ellenorizzuk, a Visual Studio-hoz kepesti elteresekrol
-// es a leggyakoribb hibakrol (pl. ideiglenes objektumot nem lehet referencia tipusnak ertekul adni)
-// a hazibeado portal ad egy osszefoglalot.
-// ---------------------------------------------------------------------------------------------
-// A feladatmegoldasokban csak olyan OpenGL fuggvenyek hasznalhatok, amelyek az oran a feladatkiadasig elhangzottak 
-// A keretben nem szereplo GLUT fuggvenyek tiltottak.
-//
 // NYILATKOZAT
 // ---------------------------------------------------------------------------------------------
-// Nev    : 
-// Neptun : 
+// Nev    : Conforti Christian
+// Neptun : F8R430
 // ---------------------------------------------------------------------------------------------
 // ezennel kijelentem, hogy a feladatot magam keszitettem, es ha barmilyen segitseget igenybe vettem vagy
 // mas szellemi termeket felhasznaltam, akkor a forrast es az atvett reszt kommentekben egyertelmuen jeloltem.
@@ -31,6 +14,7 @@
 // Tudomasul veszem, hogy a forrasmegjeloles kotelmenek megsertese eseten a hazifeladatra adhato pontokat
 // negativ elojellel szamoljak el es ezzel parhuzamosan eljaras is indul velem szemben.
 //=============================================================================================
+
 #include "framework.h"
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
@@ -58,6 +42,37 @@ const char * const fragmentSource = R"(
 		outColor = vec4(color, 1);	// computed color is the color of the primitive
 	}
 )";
+
+#pragma region Geometry
+
+struct Geometry {
+	unsigned int vao;
+	Geometry() {
+		glGenVertexArrays(1, &vao); // Can't be global variable
+		glBindVertexArray(vao);
+	}
+
+	virtual void draw() = 0;
+};
+
+struct VertexData {
+	vec3 position, normal;
+	vec2 texture;
+};
+
+struct ParamSurface : Geometry {
+	unsigned int vertexPerStrip, nStrips;
+	virtual VertexData genVertexData(const float u, const float v) = 0;
+	void create(const int M, const int N);
+	void draw() override{
+		glBindVertexArray(vao);
+		for (int i = 0; i < nStrips; i++) {
+			glDrawArrays(GL_TRIANGLE_STRIP, i * vertexPerStrip, vertexPerStrip);
+		}
+	}
+};
+
+#pragma endregion
 
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
