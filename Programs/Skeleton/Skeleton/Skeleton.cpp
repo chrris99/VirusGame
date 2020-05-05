@@ -19,33 +19,49 @@
 
 const int TESSELATION_LEVEL = 20;
 
+#pragma region DualNumber
+
+template<class T>
+struct DualNumber {
+	float funcVal;
+	T derivative;
+
+	DualNumber(float f0 = 0, T d0 = T(0)) {
+		funcVal = f0;
+		derivative = d0;
+	}
+
+	DualNumber operator+(const DualNumber& rhs) const {
+		return DualNumber(funcVal + rhs.funcVal, derivative + rhs.derivative);
+	}
+
+	DualNumber operator-(const DualNumber& rhs) const {
+		return DualNumber(funcVal - rhs.funcVal, derivative - rhs.derivative);
+	}
+
+	DualNumber operator*(const DualNumber& rhs) const {
+		return DualNumber(funcVal * rhs.funcVal, funcVal * rhs.derivative + derivative * rhs.funcVal);
+	}
+
+	DualNumber operator/(const DualNumber& rhs) const {
+		return DualNumber(funcVal / rhs.funcVal, (rhs.funcVal * derivative - rhs.derivative * funcVal) / (rhs.funcVal * rhs.funcVal));
+	}
+};
+
+template<class T> DualNumber<T> Exp(DualNumber<T> g) { return DualNumber<T>(expf(g.funcVal), expf(g.funcVal) * g.derivative); }
+template<class T> DualNumber<T> Sin(DualNumber<T> g) { return DualNumber<T>(sinf(g.funcVal), cosf(g.funcVal) * g.derivative); }
+template<class T> DualNumber<T> Cos(DualNumber<T> g) { return DualNumber<T>(cosf(g.funcVal), -sinf(g.funcVal) * g.derivative); }
+template<class T> DualNumber<T> Sinh(DualNumber<T> g) { return DualNumber<T>(sinh(g.funcVal), cosh(g.funcVal) * g.derivative); }
+template<class T> DualNumber<T> Cosh(DualNumber<T> g) { return DualNumber<T>(cosh(g.funcVal), sinh(g.funcVal) * g.derivative); }
+template<class T> DualNumber<T> Tanh(DualNumber<T> g) { return Sinh(g) / Cosh(g); }
+
+using DualNumber2 = DualNumber<vec2>;
+
+#pragma endregion
+
 #pragma region Shaders
 
-// vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
-const char * const vertexSource = R"(
-	#version 330				// Shader 3.3
-	precision highp float;		// normal floats, makes no difference on desktop computers
 
-	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
-	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
-
-	void main() {
-		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
-	}
-)";
-
-// fragment shader in GLSL
-const char * const fragmentSource = R"(
-	#version 330			// Shader 3.3
-	precision highp float;	// normal floats, makes no difference on desktop computers
-	
-	uniform vec3 color;		// uniform variable, the color of the primitive
-	out vec4 outColor;		// computed color of the current pixel
-
-	void main() {
-		outColor = vec4(color, 1);	// computed color is the color of the primitive
-	}
-)";
 
 #pragma endregion
 
@@ -60,7 +76,7 @@ struct Geometry {
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	}
 
-	virtual void Draw() = 0;
+	virtual void draw() = 0;
 
 	~Geometry() {
 		glDeleteBuffers(1, &vbo);
@@ -70,34 +86,101 @@ struct Geometry {
 
 struct VertexData {
 	vec3 position, normal;
-	vec2 texture;
+	vec2 textureCoordinate;
 };
 
-class ParamSurface : public Geometry {
+class ParametricSurface : public Geometry {
 private:
 	unsigned int vertexPerStrip, nStrips;
 
 public:
-	ParamSurface() {
+	ParametricSurface() {
 		vertexPerStrip = 0;
 		nStrips = 0;
 	}
-	virtual VertexData genVertexData(const float u, const float v) = 0;
-	void create(const int M, const int N);
-	void Draw() override{
+
+	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) = 0;
+
+	VertexData genVertexData(const float u, const float v) {
+		VertexData vertexData;
+		vertexData.textureCoordinate = vec2(u, v);
+
+		DualNumber2 X, Y, Z;
+		DualNumber2 U(u, vec2(1, 0)), V(v, vec2(0, 1));
+		evaluate(U, V, X, Y, Z);
+
+		vertexData.position = vec3(X.funcVal, Y.funcVal, Z.funcVal);
+		vertexData.normal = cross(vec3{ X.derivative.x, Y.derivative.x, Z.derivative.x }, vec3{ X.derivative.y, Y.derivative.y, Z.derivative.y });
+
+		return vertexData;
+	}
+	
+	void create(const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) {
+		vertexPerStrip = (M + 1) * 2;
+		nStrips = N;
+		std::vector<VertexData> vertices;
+		
+		for (int i = 0; i < N; i++) {
+			for (int j = 0; j <= M; j++) {
+				vertices.push_back(genVertexData((float)j / M, (float)i / N));
+				vertices.push_back(genVertexData((float)j / M, (float)(i + 1) / N));
+			}
+		}
+
+		glBufferData(GL_ARRAY_BUFFER, vertexPerStrip * nStrips * sizeof(VertexData), &vertices[0], GL_STATIC_DRAW);
+
+		glEnableVertexAttribArray(0);	// Attribute Array 0 = Position
+		glEnableVertexAttribArray(1);	// Attribute Array 1 = Normal Vector
+		glEnableVertexAttribArray(2);	// Attribute Array 2 = Texture Coordinate
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, position)));
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, normal)));
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, textureCoordinate)));
+	}
+
+	void draw() override {
 		glBindVertexArray(vao);
-		for (int i = 0; i < nStrips; i++) {
+		for (unsigned int i = 0; i < nStrips; i++) {
 			glDrawArrays(GL_TRIANGLE_STRIP, i * vertexPerStrip, vertexPerStrip);
 		}
 	}
 };
 
+class Sphere : public ParametricSurface {
+public:
+	Sphere() {
+		create();
+	}
+
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
+		U = U * 2.0f * (float)M_PI;
+		V = V * (float)M_PI;
+		X = Cos(U) * Sin(V);
+		Y = Sin(U) * Sin(V);
+		Z = Cos(V);
+	}
+};
+
+class Tractricoid : public ParametricSurface {
+public:
+	Tractricoid() { create(); }
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
+		const float height = 3.0f;
+		U = U * height;
+		V = V * 2.0f * M_PI;
+		X = Cos(V) / Cosh(U);
+		Y = Sin(V) / Cosh(U);
+		Z = U - Tanh(U);
+	}
+};
+
 #pragma endregion
+
+
 
 #pragma region Camera
 
-class Camera {
-private:
+struct Camera {
 	vec3 wEye, wLookat, wVup;
 	float fov, asp, fp, bp;
 
@@ -142,7 +225,7 @@ struct Material {
 
 struct Light {
 	vec3 La, Le;
-	vec3 wLightPos; // homogeneous coordinates, can be at ideal point
+	vec4 wLightPos; // homogeneous coordinates, can be at ideal point
 };
 
 #pragma region Texture
@@ -194,7 +277,7 @@ public:
 	void setUniformLight(const Light& light, const std::string& name) {
 		setUniform(light.La, name + ".La");
 		setUniform(light.Le, name + ".Le");
-		setUniform(light.wLightPos, name + ".wLightPost");
+		setUniform(light.wLightPos, name + ".wLightPos");
 	}
 };
 
@@ -216,7 +299,7 @@ private:
 
 		layout(location = 0) in vec3 vtxPos;
 		layout(location = 1) in vec3 vtxNorm;
-		layout(location = 2) in vtxUV;
+		layout(location = 2) in vec2 vtxUV;
 
 		out vec3 wNormal;
 		out vec3 wView;
@@ -224,7 +307,7 @@ private:
 		out vec2 texcoord;
 
 		void main() {
-			gl_Position = vec4(vtxPost, 1) * MVP;
+			gl_Position = vec4(vtxPos, 1) * MVP;
 			vec4 wPos = vec4(vtxPos, 1) * M;
 			for(int i = 0; i < nLights; i++) {
 				wLight[i] = lights[i].wLightPos.xyz * wPos.w - wPos.xyz * lights[i].wLightPos.w;
@@ -263,7 +346,7 @@ private:
 
 		void main() {
 			vec3 N = normalize(wNormal);
-			vec3 V = normalie(wView);
+			vec3 V = normalize(wView);
 			if (dot(N, V) < 0) N = -N;
 			vec3 texColor = texture(diffuseTexture, texcoord).rgb;
 			vec3 ka = material.ka * texColor;
@@ -302,8 +385,123 @@ public:
 	}
 };
 
-GPUProgram gpuProgram; // vertex and fragment shaders
-unsigned int vao;	   // virtual world on the GPU
+struct Object {
+	Shader* shader;
+	Material* material;
+	Texture* texture;
+	Geometry* geometry;
+
+	// Model transformation parameters
+	vec3 scale, translation, rotationAxis;
+	float rotationAngle;
+
+	Object(Shader* _shader, Material* _material, Texture* _texture, Geometry* _geometry) :
+		scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
+		shader = _shader;
+		texture = _texture;
+		material = _material;
+		geometry = _geometry;
+	}
+
+	virtual void setModelingTransform(mat4& M, mat4& Minv) {
+		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
+		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
+	}
+
+	void draw(RenderState state) {
+		mat4 M, Minv;
+		setModelingTransform(M, Minv);
+		state.M = M;
+		state.Minv = Minv;
+		state.MVP = state.M * state.V * state.P;
+		state.material = material;
+		state.texture = texture;
+		shader->Bind(state);
+		geometry->draw();
+	}
+
+	virtual void Animate(float tstart, float tend) {
+		rotationAngle = 0.8f * tend;
+	}
+};
+
+class Scene {
+private:
+	std::vector<Object*> objects;
+	Camera camera;
+	std::vector<Light> lights;
+public:
+	void build() {
+		Shader* phongShader = new PhongShader();
+
+		// Materials
+		Material* material0 = new Material();
+		material0->kd = vec3{ 0.6f, 0.4f, 0.2f };
+		material0->ks = vec3{ 4, 4, 4 };
+		material0->ka = vec3{ 0.1f, 0.1f, 0.1f };
+		material0->shininess = 100;
+
+		Material* material1 = new Material();
+		material1->kd = vec3{ 0.8f, 0.6f, 0.4f };
+		material1->ks = vec3{ 0.3f, 0.3f, 0.3f };
+		material1->ka = vec3{ 0.2f, 0.2f, 0.2f };
+		material1->shininess = 30;
+
+		// Textures
+		Texture* texture1 = new CheckerBoardTexture(4, 8);
+		Texture* texture2 = new CheckerBoardTexture(15, 20);
+
+		// Geometries
+		Geometry* sphere = new Sphere();
+		Geometry* tractricoid = new Tractricoid();
+
+		Object* sphereObject = new Object(phongShader, material0, texture2, sphere);
+		sphereObject->translation = vec3{ 3, 1, 0 };
+		sphereObject->scale = vec3{ 1.0f, 1.0f, 1.0f };
+		objects.push_back(sphereObject);
+
+		Object* tractiObject = new Object(phongShader, material0, texture1, tractricoid);
+		tractiObject->translation = vec3{ -4, 3, 0 };
+		tractiObject->rotationAxis = vec3{ 1, 0, 0 };
+		objects.push_back(tractiObject);
+
+		// Camera
+		camera.wEye = vec3{ 0, 0, 8 };
+		camera.wLookat = vec3{ 0, 0, 0 };
+		camera.wVup = vec3{ 0, 1, 0 };
+
+		// Lights
+		lights.resize(3);
+		lights[0].wLightPos = vec4{ 5, 5, 4, 0 };
+		lights[0].La = vec3{ 0.1f, 0.1f, 1 };
+		lights[0].Le = vec3{ 3, 0, 0 };
+
+		lights[1].wLightPos = vec4{ 5, 10, 20, 0 };
+		lights[1].La = vec3{ 0.2f, 0.2f, 0.2f };
+		lights[1].Le = vec3{ 0, 3, 0 };
+
+		lights[2].wLightPos = vec4{ -5, 5, 5, 0 };
+		lights[2].La = vec3{ 0.1f, 0.1f, 0.1f };
+		lights[2].Le = vec3{ 0, 0, 3 };
+	}
+
+	void render() {
+		RenderState state;
+		state.wEye = camera.wEye;
+		state.V = camera.V();
+		state.P = camera.P();
+		state.lights = lights;
+		for (auto object : objects) object->draw(state);
+	}
+
+	void animate(float tstart, float tend) {
+		for (auto object : objects) object->Animate(tstart, tend);
+	}
+};
+
+Scene scene;
+
+# pragma region EventHandling
 
 // Initialization, create an OpenGL context
 void onInitialization() {
@@ -312,88 +510,44 @@ void onInitialization() {
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
 
-	glGenVertexArrays(1, &vao);	// get 1 vao id
-	glBindVertexArray(vao);		// make it active
-
-	unsigned int vbo;		// vertex buffer object
-	glGenBuffers(1, &vbo);	// Generate 1 buffer
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f };
-	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		sizeof(vertices),  // # bytes
-		vertices,	      	// address
-		GL_STATIC_DRAW);	// we do not change later
-
-	glEnableVertexAttribArray(0);  // AttribArray 0
-	glVertexAttribPointer(0,       // vbo -> AttribArray 0
-		2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
-		0, NULL); 		     // stride, offset: tightly packed
-
-	// create program for the GPU
-	gpuProgram.create(vertexSource, fragmentSource, "outColor");
+	scene.build();
 }
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);							// background color
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear frame buffer
+	glClearColor(0.5f, 0.5f, 0.8f, 1.0f);							// background color
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);				// clear frame buffer
 
-	// Set color to (0, 1, 0) = green
-	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
-
-	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
-							  0, 1, 0, 0,    // row-major!
-							  0, 0, 1, 0,
-							  0, 0, 0, 1 };
-
-	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
-	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
-
-	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_TRIANGLES, 0 /*startIdx*/, 3 /*# Elements*/);
+	scene.render();
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
 
 // Key of ASCII code pressed
-void onKeyboard(unsigned char key, int pX, int pY) {
-	if (key == 'd') glutPostRedisplay();         // if d, invalidate display, i.e. redraw
-}
+void onKeyboard(unsigned char key, int pX, int pY) { }
 
 // Key of ASCII code released
-void onKeyboardUp(unsigned char key, int pX, int pY) {
-}
+void onKeyboardUp(unsigned char key, int pX, int pY) { }
 
 // Move mouse with key pressed
-void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
-	float cY = 1.0f - 2.0f * pY / windowHeight;
-	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
-}
+void onMouseMotion(int pX, int pY) { }
 
 // Mouse click event
-void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
-	float cY = 1.0f - 2.0f * pY / windowHeight;
-
-	char * buttonStat;
-	switch (state) {
-	case GLUT_DOWN: buttonStat = "pressed"; break;
-	case GLUT_UP:   buttonStat = "released"; break;
-	}
-
-	switch (button) {
-	case GLUT_LEFT_BUTTON:   printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);   break;
-	case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-	case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
-	}
-}
+void onMouse(int button, int state, int pX, int pY) { }
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
-	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	// diszkret idoszimulacio
+	static float tend = 0;
+	const float dt = 0.1f;
+	float tstart = tend;
+	tend = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+	
+	for (float t = tstart; t < tend; t += dt) {
+		float Dt = fmin(dt, tend - t);
+		scene.animate(t, t + Dt);
+	}
+	glutPostRedisplay();
 }
+
+#pragma endregion
