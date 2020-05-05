@@ -17,6 +17,8 @@
 
 #include "framework.h"
 
+#pragma region Shaders
+
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
 const char * const vertexSource = R"(
 	#version 330				// Shader 3.3
@@ -42,6 +44,8 @@ const char * const fragmentSource = R"(
 		outColor = vec4(color, 1);	// computed color is the color of the primitive
 	}
 )";
+
+#pragma endregion
 
 #pragma region Geometry
 
@@ -73,6 +77,42 @@ struct ParamSurface : Geometry {
 };
 
 #pragma endregion
+
+#pragma region Camera
+
+class Camera {
+private:
+	vec3 wEye, wLookat, wVup;
+	float fov, asp, fp, bp;
+
+public:
+	/* View matrix */
+	mat4 V() {
+		vec3 w = normalize(wEye - wLookat);
+		vec3 u = normalize(cross(wVup, w));
+		vec3 v = cross(w, u);
+		return TranslateMatrix(vec3{ -wEye.x, -wEye.y, -wEye.z }) * mat4 {
+				{u.x, v.x, w.x, 0},
+				{ u.y, v.y, w.y, 0 },
+				{ u.z, v.z, w.z, 0 },
+				{ 0, 0, 0, 1 }
+		};
+	}
+
+	/* Projection matrix */
+	mat4 P() {
+		float sy = 1 / tanf(fov / 2);
+		return mat4{
+			{sy / asp, 0, 0, 0},
+			{0, sy, 0, 0},
+			{0, 0, -(fp + bp) / (bp - fp), -1},
+			{0, 0, -2 * fp * bp / (bp - fp), 0}
+		};
+	}
+};
+
+#pragma endregion
+
 
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
