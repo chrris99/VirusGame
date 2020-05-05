@@ -17,6 +17,8 @@
 
 #include "framework.h"
 
+const int TESSELATION_LEVEL = 20;
+
 #pragma region Shaders
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
@@ -50,13 +52,20 @@ const char * const fragmentSource = R"(
 #pragma region Geometry
 
 struct Geometry {
-	unsigned int vao;
+	unsigned int vao, vbo;
 	Geometry() {
 		glGenVertexArrays(1, &vao); // Can't be global variable
 		glBindVertexArray(vao);
+		glGenBuffers(1, &vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	}
 
-	virtual void draw() = 0;
+	virtual void Draw() = 0;
+
+	~Geometry() {
+		glDeleteBuffers(1, &vbo);
+		glDeleteVertexArrays(1, &vao);
+	}
 };
 
 struct VertexData {
@@ -64,11 +73,18 @@ struct VertexData {
 	vec2 texture;
 };
 
-struct ParamSurface : Geometry {
+class ParamSurface : public Geometry {
+private:
 	unsigned int vertexPerStrip, nStrips;
+
+public:
+	ParamSurface() {
+		vertexPerStrip = 0;
+		nStrips = 0;
+	}
 	virtual VertexData genVertexData(const float u, const float v) = 0;
 	void create(const int M, const int N);
-	void draw() override{
+	void Draw() override{
 		glBindVertexArray(vao);
 		for (int i = 0; i < nStrips; i++) {
 			glDrawArrays(GL_TRIANGLE_STRIP, i * vertexPerStrip, vertexPerStrip);
@@ -86,13 +102,18 @@ private:
 	float fov, asp, fp, bp;
 
 public:
+	Camera() {
+		asp = (float)windowWidth / windowHeight;
+		fov = 75.0f * (float)M_PI / 180.0f;
+		fp = 1; bp = 20;
+	}
 	/* View matrix */
 	mat4 V() {
 		vec3 w = normalize(wEye - wLookat);
 		vec3 u = normalize(cross(wVup, w));
 		vec3 v = cross(w, u);
 		return TranslateMatrix(vec3{ -wEye.x, -wEye.y, -wEye.z }) * mat4 {
-				{u.x, v.x, w.x, 0},
+				{ u.x, v.x, w.x, 0 },
 				{ u.y, v.y, w.y, 0 },
 				{ u.z, v.z, w.z, 0 },
 				{ 0, 0, 0, 1 }
@@ -113,6 +134,173 @@ public:
 
 #pragma endregion
 
+// Rough Material
+struct Material {
+	vec3 kd, ks, ka;
+	float shininess;
+};
+
+struct Light {
+	vec3 La, Le;
+	vec3 wLightPos; // homogeneous coordinates, can be at ideal point
+};
+
+#pragma region Texture
+
+class CheckerBoardTexture : public Texture {
+public:
+	CheckerBoardTexture(const int width, const int height) : Texture() {
+		std::vector<vec4> image(width * height);
+		const vec4& yellow = vec4{ 1, 1, 0, 1 };
+		const vec4& blue = vec4{ 0, 0, 1, 1 };
+		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
+			image[y * width + x] = (x & 1) ^ (y & 1) ? yellow : blue;
+		}
+		create(width, height, image, GL_NEAREST);
+
+	}
+};
+
+#pragma endregion
+
+/*
+Interface az objektumok és a shaderek között
+Az objektum azon változói amiket szeretne érvényesíteni 
+a shaderben
+A shader innen szedi ki a dolgokat
+*/
+struct RenderState {
+	mat4 MVP, M, Minv, V, P;
+	Material* material;
+	std::vector<Light> lights;
+	Texture* texture;
+	vec3 wEye;
+};
+
+class Shader : public GPUProgram {
+public:
+	/*
+	A renderstate alapján feltölti a shader uniform változóit
+	*/
+	virtual void Bind(const RenderState& state) = 0;
+
+	void setUniformMaterial(const Material& material, const std::string& name) {
+		setUniform(material.kd, name + ".kd");
+		setUniform(material.ks, name + ".ks");
+		setUniform(material.ka, name + ".ka");
+		setUniform(material.shininess, name + ".shininess");
+	}
+
+	void setUniformLight(const Light& light, const std::string& name) {
+		setUniform(light.La, name + ".La");
+		setUniform(light.Le, name + ".Le");
+		setUniform(light.wLightPos, name + ".wLightPost");
+	}
+};
+
+class PhongShader : public Shader {
+private:
+	const char* vertexSource = R"(
+		#version 330
+		precision highp float;
+		
+		struct Light {
+			vec3 La, Le;
+			vec4 wLightPos;
+		};
+
+		uniform mat4 MVP, M, Minv;
+		uniform Light[8] lights;
+		uniform int nLights;
+		uniform vec3 wEye;
+
+		layout(location = 0) in vec3 vtxPos;
+		layout(location = 1) in vec3 vtxNorm;
+		layout(location = 2) in vtxUV;
+
+		out vec3 wNormal;
+		out vec3 wView;
+		out vec3 wLight[8];
+		out vec2 texcoord;
+
+		void main() {
+			gl_Position = vec4(vtxPost, 1) * MVP;
+			vec4 wPos = vec4(vtxPos, 1) * M;
+			for(int i = 0; i < nLights; i++) {
+				wLight[i] = lights[i].wLightPos.xyz * wPos.w - wPos.xyz * lights[i].wLightPos.w;
+			}
+			wView = wEye * wPos.w - wPos.xyz;
+			wNormal = (Minv * vec4(vtxNorm, 0)).xyz;
+			texcoord = vtxUV;
+		}
+	)";
+
+	const char* fragmentSource = R"(
+		#version 330
+		precision highp float;
+
+		struct Light {
+			vec3 La, Le;
+			vec4 wLightPos;
+		};
+
+		struct Material {
+			vec3 kd, ks, ka;
+			float shininess;
+		};
+
+		uniform Material material;
+		uniform Light[8] lights;
+		uniform int nLights;
+		uniform sampler2D diffuseTexture;
+
+		in vec3 wNormal;
+		in vec3 wView;
+		in vec3 wLight[8];
+		in vec2 texcoord;
+
+		out vec4 fragmentColor;
+
+		void main() {
+			vec3 N = normalize(wNormal);
+			vec3 V = normalie(wView);
+			if (dot(N, V) < 0) N = -N;
+			vec3 texColor = texture(diffuseTexture, texcoord).rgb;
+			vec3 ka = material.ka * texColor;
+			vec3 kd = material.kd * texColor;
+			
+			vec3 radiance = vec3(0, 0, 0);	
+			for(int i = 0; i < nLights; i++) {
+				vec3 L = normalize(wLight[i]);
+				vec3 H = normalize(L + V);
+				float cost = max(dot(N, L), 0), cosd = max(dot(N, H), 0);
+				radiance += ka * lights[i].La +
+							(kd * texColor * cost + material.ks * pow(cosd, material.shininess)) * lights[i].Le;
+			}
+			fragmentColor = vec4(radiance, 1);
+		}
+	)";
+
+public:
+	PhongShader() {
+		create(vertexSource, fragmentSource, "fragmentColor");
+	}
+
+	void Bind(const RenderState& state) {
+		Use();
+		setUniform(state.MVP, "MVP");
+		setUniform(state.M, "M");
+		setUniform(state.Minv, "Minv");
+		setUniform(state.wEye, "wEye");
+		setUniform(*state.texture, std::string("diffuseTexture"));
+		setUniformMaterial(*state.material, "material");
+
+		setUniform((int)state.lights.size(), "nLights");
+		for (unsigned int i = 0; i < state.lights.size(); i++) {
+			setUniformLight(state.lights[i], std::string("lights[") + std::to_string(i) + std::string("]"));
+		}
+	}
+};
 
 GPUProgram gpuProgram; // vertex and fragment shaders
 unsigned int vao;	   // virtual world on the GPU
@@ -120,6 +308,9 @@ unsigned int vao;	   // virtual world on the GPU
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
+
+	glEnable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
 
 	glGenVertexArrays(1, &vao);	// get 1 vao id
 	glBindVertexArray(vao);		// make it active
@@ -145,8 +336,8 @@ void onInitialization() {
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);     // background color
-	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
+	glClearColor(0, 0, 0, 0);							// background color
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // clear frame buffer
 
 	// Set color to (0, 1, 0) = green
 	int location = glGetUniformLocation(gpuProgram.getId(), "color");
