@@ -18,6 +18,7 @@
 #include "framework.h"
 
 const int TESSELATION_LEVEL = 20;
+const float PI_F = 3.14159265358979f;
 
 #pragma region DualNumber
 
@@ -59,16 +60,19 @@ using DualNumber2 = DualNumber<vec2>;
 
 #pragma endregion
 
-#pragma region Shaders
-
-
-
-#pragma endregion
-
 #pragma region Geometry
 
-struct Geometry {
-	unsigned int vao, vbo;
+struct VertexData {
+	vec3 position, normal;
+	vec2 textureCoordinate;
+};
+
+class Geometry {
+protected:
+	unsigned int vao;	// Vertex Array Object 
+	unsigned int vbo;	// Vertex Buffer Object 
+
+public:
 	Geometry() {
 		glGenVertexArrays(1, &vao); // Can't be global variable
 		glBindVertexArray(vao);
@@ -82,11 +86,6 @@ struct Geometry {
 		glDeleteBuffers(1, &vbo);
 		glDeleteVertexArrays(1, &vao);
 	}
-};
-
-struct VertexData {
-	vec3 position, normal;
-	vec2 textureCoordinate;
 };
 
 class ParametricSurface : public Geometry {
@@ -146,13 +145,11 @@ public:
 	}
 };
 
-class Sphere : public ParametricSurface {
+class Sphere final : public ParametricSurface {
 public:
-	Sphere() {
-		create();
-	}
+	Sphere() { create(); }
 
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
 		U = U * 2.0f * (float)M_PI;
 		V = V * (float)M_PI;
 		X = Cos(U) * Sin(V);
@@ -161,57 +158,17 @@ public:
 	}
 };
 
-class Tractricoid : public ParametricSurface {
+class Tractricoid final : public ParametricSurface {
 public:
 	Tractricoid() { create(); }
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
+
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
 		const float height = 3.0f;
 		U = U * height;
 		V = V * 2.0f * M_PI;
 		X = Cos(V) / Cosh(U);
 		Y = Sin(V) / Cosh(U);
 		Z = U - Tanh(U);
-	}
-};
-
-#pragma endregion
-
-
-
-#pragma region Camera
-
-struct Camera {
-	vec3 wEye, wLookat, wVup;
-	float fov, asp, fp, bp;
-
-public:
-	Camera() {
-		asp = (float)windowWidth / windowHeight;
-		fov = 75.0f * (float)M_PI / 180.0f;
-		fp = 1; bp = 20;
-	}
-	/* View matrix */
-	mat4 V() {
-		vec3 w = normalize(wEye - wLookat);
-		vec3 u = normalize(cross(wVup, w));
-		vec3 v = cross(w, u);
-		return TranslateMatrix(vec3{ -wEye.x, -wEye.y, -wEye.z }) * mat4 {
-				{ u.x, v.x, w.x, 0 },
-				{ u.y, v.y, w.y, 0 },
-				{ u.z, v.z, w.z, 0 },
-				{ 0, 0, 0, 1 }
-		};
-	}
-
-	/* Projection matrix */
-	mat4 P() {
-		float sy = 1 / tanf(fov / 2);
-		return mat4{
-			{sy / asp, 0, 0, 0},
-			{0, sy, 0, 0},
-			{0, 0, -(fp + bp) / (bp - fp), -1},
-			{0, 0, -2 * fp * bp / (bp - fp), 0}
-		};
 	}
 };
 
@@ -228,8 +185,61 @@ struct Light {
 	vec4 wLightPos; // homogeneous coordinates, can be at ideal point
 };
 
+#pragma region Camera
+
+struct Camera {
+	vec3 wEye, wLookat, wVup;
+	float fov, asp, fp, bp;
+
+public:
+
+	/**
+	 *
+	 */
+	Camera() {
+		asp = (float)windowWidth / windowHeight;
+		fov = 75.0f * (float)M_PI / 180.0f;
+		fp = 1; bp = 20;
+	}
+
+	/**
+	 *
+	 */
+	mat4 V() {
+		vec3 w = normalize(wEye - wLookat);
+		vec3 u = normalize(cross(wVup, w));
+		vec3 v = cross(w, u);
+		return TranslateMatrix(vec3{ -wEye.x, -wEye.y, -wEye.z }) * mat4 {
+				{ u.x, v.x, w.x, 0 },
+				{ u.y, v.y, w.y, 0 },
+				{ u.z, v.z, w.z, 0 },
+				{ 0, 0, 0, 1 }
+		};
+	}
+
+	/**
+	 *
+	 */
+	mat4 P() {
+		float sy = 1 / tanf(fov / 2);
+		return mat4{
+			{sy / asp, 0, 0, 0},
+			{0, sy, 0, 0},
+			{0, 0, -(fp + bp) / (bp - fp), -1},
+			{0, 0, -2 * fp * bp / (bp - fp), 0}
+		};
+	}
+};
+
+#pragma endregion
+
+
+
 #pragma region Texture
 
+/**
+ *
+ */
 class CheckerBoardTexture : public Texture {
 public:
 	CheckerBoardTexture(const int width, const int height) : Texture() {
@@ -241,6 +251,17 @@ public:
 		}
 		create(width, height, image, GL_NEAREST);
 
+	}
+};
+
+class StripeTexture : public Texture {
+public:
+	StripeTexture(const int width, const int height, const vec4& color1 = vec4{ 1, 1, 0, 1 }, const vec4& color2 = vec4{ 0, 0, 1, 1 }) : Texture() {
+		std::vector<vec4> image(width * height);
+		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
+			image[y * width + x] = y % 2 ? color1 : color2;
+		}
+		create(width, height, image, GL_NEAREST);
 	}
 };
 
@@ -260,12 +281,14 @@ struct RenderState {
 	vec3 wEye;
 };
 
+#pragma region Shaders
+
 class Shader : public GPUProgram {
 public:
 	/*
 	A renderstate alapján feltölti a shader uniform változóit
 	*/
-	virtual void Bind(const RenderState& state) = 0;
+	virtual void bind(const RenderState& state) = 0;
 
 	void setUniformMaterial(const Material& material, const std::string& name) {
 		setUniform(material.kd, name + ".kd");
@@ -369,7 +392,7 @@ public:
 		create(vertexSource, fragmentSource, "fragmentColor");
 	}
 
-	void Bind(const RenderState& state) {
+	void bind(const RenderState& state) {
 		Use();
 		setUniform(state.MVP, "MVP");
 		setUniform(state.M, "M");
@@ -384,6 +407,8 @@ public:
 		}
 	}
 };
+
+#pragma endregion
 
 struct Object {
 	Shader* shader;
@@ -403,11 +428,20 @@ struct Object {
 		geometry = _geometry;
 	}
 
+	/**
+	 * 
+	 * @param M
+	 * @param Minv
+	 */
 	virtual void setModelingTransform(mat4& M, mat4& Minv) {
 		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
 		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
 	}
 
+	/**
+	 *
+	 * @pram state
+	 */
 	void draw(RenderState state) {
 		mat4 M, Minv;
 		setModelingTransform(M, Minv);
@@ -416,21 +450,33 @@ struct Object {
 		state.MVP = state.M * state.V * state.P;
 		state.material = material;
 		state.texture = texture;
-		shader->Bind(state);
+		shader->bind(state);
 		geometry->draw();
 	}
 
-	virtual void Animate(float tstart, float tend) {
+	/**
+	 *
+	 * @param tstart
+	 * @param tend
+	 */
+	virtual void animate(float tstart, float tend) {
 		rotationAngle = 0.8f * tend;
 	}
 };
 
+/**
+ * Represents the virtual world
+ */
 class Scene {
 private:
 	std::vector<Object*> objects;
 	Camera camera;
 	std::vector<Light> lights;
 public:
+
+	/**
+	 *
+	 */
 	void build() {
 		Shader* phongShader = new PhongShader();
 
@@ -448,8 +494,8 @@ public:
 		material1->shininess = 30;
 
 		// Textures
-		Texture* texture1 = new CheckerBoardTexture(4, 8);
-		Texture* texture2 = new CheckerBoardTexture(15, 20);
+		Texture* texture1 = new StripeTexture(4, 8);
+		Texture* texture2 = new StripeTexture(15, 20);
 
 		// Geometries
 		Geometry* sphere = new Sphere();
@@ -458,6 +504,7 @@ public:
 		Object* sphereObject = new Object(phongShader, material0, texture2, sphere);
 		sphereObject->translation = vec3{ 3, 1, 0 };
 		sphereObject->scale = vec3{ 1.0f, 1.0f, 1.0f };
+		sphereObject->rotationAxis = vec3{ 1, 0, 0 };
 		objects.push_back(sphereObject);
 
 		Object* tractiObject = new Object(phongShader, material0, texture1, tractricoid);
@@ -495,7 +542,7 @@ public:
 	}
 
 	void animate(float tstart, float tend) {
-		for (auto object : objects) object->Animate(tstart, tend);
+		for (auto object : objects) object->animate(tstart, tend);
 	}
 };
 
