@@ -17,7 +17,7 @@
 
 #include "framework.h"
 
-const int TESSELATION_LEVEL = 20;
+const int TESSELATION_LEVEL = 30;
 const float PI_F = 3.14159265358979f;
 
 #pragma region DualNumber
@@ -265,7 +265,10 @@ public:
 	}
 };
 
+
 #pragma endregion
+
+#pragma region Shaders
 
 /*
 Interface az objektumok és a shaderek között
@@ -281,30 +284,7 @@ struct RenderState {
 	vec3 wEye;
 };
 
-#pragma region Shaders
-
-class Shader : public GPUProgram {
-public:
-	/*
-	A renderstate alapján feltölti a shader uniform változóit
-	*/
-	virtual void bind(const RenderState& state) = 0;
-
-	void setUniformMaterial(const Material& material, const std::string& name) {
-		setUniform(material.kd, name + ".kd");
-		setUniform(material.ks, name + ".ks");
-		setUniform(material.ka, name + ".ka");
-		setUniform(material.shininess, name + ".shininess");
-	}
-
-	void setUniformLight(const Light& light, const std::string& name) {
-		setUniform(light.La, name + ".La");
-		setUniform(light.Le, name + ".Le");
-		setUniform(light.wLightPos, name + ".wLightPos");
-	}
-};
-
-class PhongShader : public Shader {
+class PhongShader : public GPUProgram {
 private:
 	const char* vertexSource = R"(
 		#version 330
@@ -392,6 +372,19 @@ public:
 		create(vertexSource, fragmentSource, "fragmentColor");
 	}
 
+	void setUniformMaterial(const Material& material, const std::string& name) {
+		setUniform(material.kd, name + ".kd");
+		setUniform(material.ks, name + ".ks");
+		setUniform(material.ka, name + ".ka");
+		setUniform(material.shininess, name + ".shininess");
+	}
+
+	void setUniformLight(const Light& light, const std::string& name) {
+		setUniform(light.La, name + ".La");
+		setUniform(light.Le, name + ".Le");
+		setUniform(light.wLightPos, name + ".wLightPos");
+	}
+
 	void bind(const RenderState& state) {
 		Use();
 		setUniform(state.MVP, "MVP");
@@ -408,10 +401,11 @@ public:
 	}
 };
 
+PhongShader* gpuProgram;
+
 #pragma endregion
 
 struct Object {
-	Shader* shader;
 	Material* material;
 	Texture* texture;
 	Geometry* geometry;
@@ -420,9 +414,8 @@ struct Object {
 	vec3 scale, translation, rotationAxis;
 	float rotationAngle;
 
-	Object(Shader* _shader, Material* _material, Texture* _texture, Geometry* _geometry) :
+	Object(Material* _material, Texture* _texture, Geometry* _geometry) :
 		scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
-		shader = _shader;
 		texture = _texture;
 		material = _material;
 		geometry = _geometry;
@@ -450,7 +443,7 @@ struct Object {
 		state.MVP = state.M * state.V * state.P;
 		state.material = material;
 		state.texture = texture;
-		shader->bind(state);
+		gpuProgram->bind(state);
 		geometry->draw();
 	}
 
@@ -459,9 +452,18 @@ struct Object {
 	 * @param tstart
 	 * @param tend
 	 */
-	virtual void animate(float tstart, float tend) {
-		rotationAngle = 0.8f * tend;
+	virtual void animate(const float t) {
+		rotationAngle = 0.8f * t;
 	}
+};
+
+class Virus : public Object {
+private:
+	Sphere* body;
+	std::vector<Tractricoid*> corona;
+
+public:
+
 };
 
 /**
@@ -469,16 +471,16 @@ struct Object {
  */
 class Scene {
 private:
-	std::vector<Object*> objects;
 	Camera camera;
+	std::vector<Object*> objects;
 	std::vector<Light> lights;
+
 public:
 
 	/**
 	 *
 	 */
 	void build() {
-		Shader* phongShader = new PhongShader();
 
 		// Materials
 		Material* material0 = new Material();
@@ -501,13 +503,13 @@ public:
 		Geometry* sphere = new Sphere();
 		Geometry* tractricoid = new Tractricoid();
 
-		Object* sphereObject = new Object(phongShader, material0, texture2, sphere);
+		Object* sphereObject = new Object(material0, texture2, sphere);
 		sphereObject->translation = vec3{ 3, 1, 0 };
 		sphereObject->scale = vec3{ 1.0f, 1.0f, 1.0f };
 		sphereObject->rotationAxis = vec3{ 1, 0, 0 };
 		objects.push_back(sphereObject);
 
-		Object* tractiObject = new Object(phongShader, material0, texture1, tractricoid);
+		Object* tractiObject = new Object(material0, texture1, tractricoid);
 		tractiObject->translation = vec3{ -4, 3, 0 };
 		tractiObject->rotationAxis = vec3{ 1, 0, 0 };
 		objects.push_back(tractiObject);
@@ -541,8 +543,8 @@ public:
 		for (auto object : objects) object->draw(state);
 	}
 
-	void animate(float tstart, float tend) {
-		for (auto object : objects) object->animate(tstart, tend);
+	void animate(const float t) {
+		for (auto object : objects) object->animate(t);
 	}
 };
 
@@ -557,6 +559,7 @@ void onInitialization() {
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
 
+	gpuProgram = new PhongShader();
 	scene.build();
 }
 
@@ -570,30 +573,29 @@ void onDisplay() {
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
 
-// Key of ASCII code pressed
 void onKeyboard(unsigned char key, int pX, int pY) { }
 
-// Key of ASCII code released
 void onKeyboardUp(unsigned char key, int pX, int pY) { }
 
-// Move mouse with key pressed
 void onMouseMotion(int pX, int pY) { }
 
-// Mouse click event
 void onMouse(int button, int state, int pX, int pY) { }
 
-// Idle event indicating that some time elapsed: do animation here
 void onIdle() {
-	// diszkret idoszimulacio
+	// Discrete time simulation
 	static float tend = 0;
 	const float dt = 0.1f;
 	float tstart = tend;
+
+	// Conversion to seconds
 	tend = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
 	
 	for (float t = tstart; t < tend; t += dt) {
 		float Dt = fmin(dt, tend - t);
-		scene.animate(t, t + Dt);
+		scene.animate(t);
 	}
+
+	// Redrawing the display
 	glutPostRedisplay();
 }
 
