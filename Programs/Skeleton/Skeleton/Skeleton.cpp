@@ -150,8 +150,8 @@ public:
 	Sphere() { create(); }
 
 	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
-		U = U * 2.0f * (float)M_PI;
-		V = V * (float)M_PI;
+		U = U * 2.0f * PI_F;
+		V = V * PI_F;
 		X = Cos(U) * Sin(V);
 		Y = Sin(U) * Sin(V);
 		Z = Cos(V);
@@ -165,7 +165,7 @@ public:
 	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
 		const float height = 3.0f;
 		U = U * height;
-		V = V * 2.0f * M_PI;
+		V = V * 2.0f * PI_F;
 		X = Cos(V) / Cosh(U);
 		Y = Sin(V) / Cosh(U);
 		Z = U - Tanh(U);
@@ -182,7 +182,7 @@ struct Material {
 
 struct Light {
 	vec3 La, Le;
-	vec4 wLightPos; // homogeneous coordinates, can be at ideal point
+	vec4 wLightPos; 
 };
 
 #pragma region Camera
@@ -193,18 +193,12 @@ struct Camera {
 
 public:
 
-	/**
-	 *
-	 */
 	Camera() {
 		asp = (float)windowWidth / windowHeight;
 		fov = 75.0f * (float)M_PI / 180.0f;
 		fp = 1; bp = 20;
 	}
 
-	/**
-	 *
-	 */
 	mat4 V() {
 		vec3 w = normalize(wEye - wLookat);
 		vec3 u = normalize(cross(wVup, w));
@@ -217,9 +211,6 @@ public:
 		};
 	}
 
-	/**
-	 *
-	 */
 	mat4 P() {
 		float sy = 1 / tanf(fov / 2);
 		return mat4{
@@ -237,9 +228,6 @@ public:
 
 #pragma region Texture
 
-/**
- *
- */
 class CheckerBoardTexture : public Texture {
 public:
 	CheckerBoardTexture(const int width, const int height) : Texture() {
@@ -270,12 +258,6 @@ public:
 
 #pragma region Shaders
 
-/*
-Interface az objektumok és a shaderek között
-Az objektum azon változói amiket szeretne érvényesíteni 
-a shaderben
-A shader innen szedi ki a dolgokat
-*/
 struct RenderState {
 	mat4 MVP, M, Minv, V, P;
 	Material* material;
@@ -405,7 +387,8 @@ PhongShader* gpuProgram;
 
 #pragma endregion
 
-struct Object {
+class Object {
+protected:
 	Material* material;
 	Texture* texture;
 	Geometry* geometry;
@@ -414,6 +397,7 @@ struct Object {
 	vec3 scale, translation, rotationAxis;
 	float rotationAngle;
 
+public:
 	Object(Material* _material, Texture* _texture, Geometry* _geometry) :
 		scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
 		texture = _texture;
@@ -421,20 +405,15 @@ struct Object {
 		geometry = _geometry;
 	}
 
-	/**
-	 * 
-	 * @param M
-	 * @param Minv
-	 */
-	virtual void setModelingTransform(mat4& M, mat4& Minv) {
+	void setScale(const vec3& _scale) { scale = _scale; }
+	void setTranslation(const vec3& _translation) { translation = _translation; }
+	void setRotationAxis(const vec3& _axis) { rotationAxis = _axis; }
+
+	void setModelingTransform(mat4& M, mat4& Minv) {
 		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
 		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
 	}
 
-	/**
-	 *
-	 * @pram state
-	 */
 	void draw(RenderState state) {
 		mat4 M, Minv;
 		setModelingTransform(M, Minv);
@@ -447,11 +426,6 @@ struct Object {
 		geometry->draw();
 	}
 
-	/**
-	 *
-	 * @param tstart
-	 * @param tend
-	 */
 	virtual void animate(const float t) {
 		rotationAngle = 0.8f * t;
 	}
@@ -477,9 +451,6 @@ private:
 
 public:
 
-	/**
-	 *
-	 */
 	void build() {
 
 		// Materials
@@ -504,14 +475,14 @@ public:
 		Geometry* tractricoid = new Tractricoid();
 
 		Object* sphereObject = new Object(material0, texture2, sphere);
-		sphereObject->translation = vec3{ 3, 1, 0 };
-		sphereObject->scale = vec3{ 1.0f, 1.0f, 1.0f };
-		sphereObject->rotationAxis = vec3{ 1, 0, 0 };
+		sphereObject->setTranslation(vec3{ 3, 1, 0 });
+		sphereObject->setScale(vec3{ 1.0f, 1.0f, 1.0f });
+		sphereObject->setRotationAxis(vec3{ 1, 0, 0 });
 		objects.push_back(sphereObject);
 
 		Object* tractiObject = new Object(material0, texture1, tractricoid);
-		tractiObject->translation = vec3{ -4, 3, 0 };
-		tractiObject->rotationAxis = vec3{ 1, 0, 0 };
+		tractiObject->setTranslation(vec3{ -4, 3, 0 });
+		tractiObject->setRotationAxis(vec3{ 1, 0, 0 });
 		objects.push_back(tractiObject);
 
 		// Camera
