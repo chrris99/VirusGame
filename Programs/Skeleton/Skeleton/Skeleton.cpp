@@ -60,121 +60,8 @@ using DualNumber2 = DualNumber<vec2>;
 
 #pragma endregion
 
-#pragma region Geometry
+#pragma region Material and Light
 
-struct VertexData {
-	vec3 position, normal;
-	vec2 textureCoordinate;
-};
-
-class Geometry {
-protected:
-	unsigned int vao;	// Vertex Array Object 
-	unsigned int vbo;	// Vertex Buffer Object 
-
-public:
-	Geometry() {
-		glGenVertexArrays(1, &vao); // Can't be global variable
-		glBindVertexArray(vao);
-		glGenBuffers(1, &vbo);
-		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	}
-
-	virtual void draw() = 0;
-
-	~Geometry() {
-		glDeleteBuffers(1, &vbo);
-		glDeleteVertexArrays(1, &vao);
-	}
-};
-
-class ParametricSurface : public Geometry {
-private:
-	unsigned int vertexPerStrip, nStrips;
-
-public:
-	ParametricSurface() {
-		vertexPerStrip = 0;
-		nStrips = 0;
-	}
-
-	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) = 0;
-
-	VertexData genVertexData(const float u, const float v) {
-		VertexData vertexData;
-		vertexData.textureCoordinate = vec2(u, v);
-
-		DualNumber2 X, Y, Z;
-		DualNumber2 U(u, vec2(1, 0)), V(v, vec2(0, 1));
-		evaluate(U, V, X, Y, Z);
-
-		vertexData.position = vec3(X.funcVal, Y.funcVal, Z.funcVal);
-		vertexData.normal = cross(vec3{ X.derivative.x, Y.derivative.x, Z.derivative.x }, vec3{ X.derivative.y, Y.derivative.y, Z.derivative.y });
-
-		return vertexData;
-	}
-	
-	void create(const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) {
-		vertexPerStrip = (M + 1) * 2;
-		nStrips = N;
-		std::vector<VertexData> vertices;
-		
-		for (int i = 0; i < N; i++) {
-			for (int j = 0; j <= M; j++) {
-				vertices.push_back(genVertexData((float)j / M, (float)i / N));
-				vertices.push_back(genVertexData((float)j / M, (float)(i + 1) / N));
-			}
-		}
-
-		glBufferData(GL_ARRAY_BUFFER, vertexPerStrip * nStrips * sizeof(VertexData), &vertices[0], GL_STATIC_DRAW);
-
-		glEnableVertexAttribArray(0);	// Attribute Array 0 = Position
-		glEnableVertexAttribArray(1);	// Attribute Array 1 = Normal Vector
-		glEnableVertexAttribArray(2);	// Attribute Array 2 = Texture Coordinate
-
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, position)));
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, normal)));
-		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, textureCoordinate)));
-	}
-
-	void draw() override {
-		glBindVertexArray(vao);
-		for (unsigned int i = 0; i < nStrips; i++) {
-			glDrawArrays(GL_TRIANGLE_STRIP, i * vertexPerStrip, vertexPerStrip);
-		}
-	}
-};
-
-class Sphere final : public ParametricSurface {
-public:
-	Sphere() { create(); }
-
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
-		U = U * 2.0f * PI_F;
-		V = V * PI_F;
-		X = Cos(U) * Sin(V);
-		Y = Sin(U) * Sin(V);
-		Z = Cos(V);
-	}
-};
-
-class Tractricoid final : public ParametricSurface {
-public:
-	Tractricoid() { create(); }
-
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
-		const float height = 3.0f;
-		U = U * height;
-		V = V * 2.0f * PI_F;
-		X = Cos(V) / Cosh(U);
-		Y = Sin(V) / Cosh(U);
-		Z = U - Tanh(U);
-	}
-};
-
-#pragma endregion
-
-// Rough Material
 struct Material {
 	vec3 kd, ks, ka;
 	float shininess;
@@ -182,49 +69,10 @@ struct Material {
 
 struct Light {
 	vec3 La, Le;
-	vec4 wLightPos; 
-};
-
-#pragma region Camera
-
-struct Camera {
-	vec3 wEye, wLookat, wVup;
-	float fov, asp, fp, bp;
-
-public:
-
-	Camera() {
-		asp = (float)windowWidth / windowHeight;
-		fov = 75.0f * (float)M_PI / 180.0f;
-		fp = 1; bp = 20;
-	}
-
-	mat4 V() {
-		vec3 w = normalize(wEye - wLookat);
-		vec3 u = normalize(cross(wVup, w));
-		vec3 v = cross(w, u);
-		return TranslateMatrix(vec3{ -wEye.x, -wEye.y, -wEye.z }) * mat4 {
-				{ u.x, v.x, w.x, 0 },
-				{ u.y, v.y, w.y, 0 },
-				{ u.z, v.z, w.z, 0 },
-				{ 0, 0, 0, 1 }
-		};
-	}
-
-	mat4 P() {
-		float sy = 1 / tanf(fov / 2);
-		return mat4{
-			{sy / asp, 0, 0, 0},
-			{0, sy, 0, 0},
-			{0, 0, -(fp + bp) / (bp - fp), -1},
-			{0, 0, -2 * fp * bp / (bp - fp), 0}
-		};
-	}
+	vec4 wLightPos;
 };
 
 #pragma endregion
-
-
 
 #pragma region Texture
 
@@ -252,7 +100,6 @@ public:
 		create(width, height, image, GL_NEAREST);
 	}
 };
-
 
 #pragma endregion
 
@@ -387,6 +234,169 @@ PhongShader* gpuProgram;
 
 #pragma endregion
 
+#pragma region Camera
+
+struct Camera {
+	vec3 wEye, wLookat, wVup;
+	float fov, asp, fp, bp;
+
+public:
+
+	Camera() {
+		asp = (float)windowWidth / windowHeight;
+		fov = 75.0f * (float)M_PI / 180.0f;
+		fp = 1; bp = 20;
+	}
+
+	void set(const vec3& _wEye, const vec3& _wLookat, const vec3& _wVup) {
+		wEye = _wEye;
+		wLookat = _wLookat;
+		wVup = _wVup;
+	}
+
+	mat4 V() {
+		vec3 w = normalize(wEye - wLookat);
+		vec3 u = normalize(cross(wVup, w));
+		vec3 v = cross(w, u);
+		return TranslateMatrix(vec3{ -wEye.x, -wEye.y, -wEye.z }) * mat4 {
+			{ u.x, v.x, w.x, 0 },
+			{ u.y, v.y, w.y, 0 },
+			{ u.z, v.z, w.z, 0 },
+			{ 0, 0, 0, 1 }
+		};
+	}
+
+	mat4 P() {
+		float sy = 1 / tanf(fov / 2);
+		return mat4{
+			{sy / asp, 0, 0, 0},
+			{0, sy, 0, 0},
+			{0, 0, -(fp + bp) / (bp - fp), -1},
+			{0, 0, -2 * fp * bp / (bp - fp), 0}
+		};
+	}
+};
+
+#pragma endregion
+
+#pragma region Geometry
+
+struct VertexData {
+	vec3 position, normal;
+	vec2 textureCoordinate;
+};
+
+class Geometry {
+protected:
+	unsigned int vao;	// Vertex Array Object 
+	unsigned int vbo;	// Vertex Buffer Object 
+
+public:
+	Geometry() {
+		glGenVertexArrays(1, &vao); // Can't be global variable
+		glBindVertexArray(vao);
+		glGenBuffers(1, &vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	}
+
+	virtual void draw() = 0;
+
+	~Geometry() {
+		glDeleteBuffers(1, &vbo);
+		glDeleteVertexArrays(1, &vao);
+	}
+};
+
+class ParametricSurface : public Geometry {
+private:
+	unsigned int vertexPerStrip, nStrips;
+
+public:
+	ParametricSurface() {
+		vertexPerStrip = 0;
+		nStrips = 0;
+	}
+
+	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) = 0;
+
+	VertexData genVertexData(const float u, const float v) {
+		VertexData vertexData;
+		vertexData.textureCoordinate = vec2(u, v);
+
+		DualNumber2 X, Y, Z;
+		DualNumber2 U(u, vec2(1, 0)), V(v, vec2(0, 1));
+		evaluate(U, V, X, Y, Z);
+
+		vertexData.position = vec3(X.funcVal, Y.funcVal, Z.funcVal);
+		vertexData.normal = cross(vec3{ X.derivative.x, Y.derivative.x, Z.derivative.x }, vec3{ X.derivative.y, Y.derivative.y, Z.derivative.y });
+
+		return vertexData;
+	}
+	
+	void create(const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) {
+		vertexPerStrip = (M + 1) * 2;
+		nStrips = N;
+		std::vector<VertexData> vertices;
+		
+		for (int i = 0; i < N; i++) {
+			for (int j = 0; j <= M; j++) {
+				vertices.push_back(genVertexData((float)j / M, (float)i / N));
+				vertices.push_back(genVertexData((float)j / M, (float)(i + 1) / N));
+			}
+		}
+
+		glBufferData(GL_ARRAY_BUFFER, vertexPerStrip * nStrips * sizeof(VertexData), &vertices[0], GL_STATIC_DRAW);
+
+		glEnableVertexAttribArray(0);	// Attribute Array 0 = Position
+		glEnableVertexAttribArray(1);	// Attribute Array 1 = Normal Vector
+		glEnableVertexAttribArray(2);	// Attribute Array 2 = Texture Coordinate
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, position)));
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, normal)));
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, textureCoordinate)));
+	}
+
+	void draw() override {
+		glBindVertexArray(vao);
+		for (unsigned int i = 0; i < nStrips; i++) {
+			glDrawArrays(GL_TRIANGLE_STRIP, i * vertexPerStrip, vertexPerStrip);
+		}
+	}
+};
+
+class Sphere : public ParametricSurface {
+public:
+	Sphere() { create(); }
+
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
+		U = U * 2.0f * PI_F;
+		V = V * PI_F;
+		X = Cos(U) * Sin(V);
+		Y = Sin(U) * Sin(V);
+		Z = Cos(V);
+	}
+};
+
+class Tractricoid final : public ParametricSurface {
+public:
+	Tractricoid() { create(); }
+
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
+		const float height = 3.0f;
+		U = U * height;
+		V = V * 2.0f * PI_F;
+		X = Cos(V) / Cosh(U);
+		Y = Sin(V) / Cosh(U);
+		Z = U - Tanh(U);
+	}
+};
+
+
+
+
+
+#pragma endregion
+
 class Object {
 protected:
 	Material* material;
@@ -398,8 +408,9 @@ protected:
 	float rotationAngle;
 
 public:
-	Object(Material* _material, Texture* _texture, Geometry* _geometry) :
-		scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
+	Object() { }
+
+	Object(Material* _material, Texture* _texture, Geometry* _geometry) : scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
 		texture = _texture;
 		material = _material;
 		geometry = _geometry;
@@ -408,6 +419,9 @@ public:
 	void setScale(const vec3& _scale) { scale = _scale; }
 	void setTranslation(const vec3& _translation) { translation = _translation; }
 	void setRotationAxis(const vec3& _axis) { rotationAxis = _axis; }
+	void setRotationAngle(const float& _angle) { rotationAngle = _angle; }
+
+	vec3 getTranslation() { return translation; }
 
 	void setModelingTransform(mat4& M, mat4& Minv) {
 		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
@@ -427,31 +441,88 @@ public:
 	}
 
 	virtual void animate(const float t) {
-		rotationAngle = 0.8f * t;
+		//rotationAngle = 0.8f * t;
 	}
 };
 
-class Virus : public Object {
+class Virus {
 private:
-	Sphere* body;
-	std::vector<Tractricoid*> corona;
+	Object* body;
+	std::vector<Object*> coronas;
+
+	void createCorona() {
+		Tractricoid* t = new Tractricoid();
+
+		Material* material0 = new Material();
+		material0->kd = vec3{ 0.6f, 0.4f, 0.2f };
+		material0->ks = vec3{ 4, 4, 4 };
+		material0->ka = vec3{ 0.1f, 0.1f, 0.1f };
+		material0->shininess = 100;
+
+		Texture* texture1 = new StripeTexture(4, 8);
+
+		Object* corona = new Object(material0, texture1, t);
+		corona->setScale(vec3{ 0.5, 0.5, 0.5 });
+		Sphere* s = new Sphere();
+		VertexData v = s->genVertexData(0.0f, 0.0f);
+		
+		corona->setTranslation(v.position + body->getTranslation());
+
+		coronas.push_back(corona);
+	}
 
 public:
+	Virus(Object* _body) : body{ _body } {
+		createCorona();
+	}
 
+	void draw(RenderState state) {
+		body->draw(state);
+		for (auto c : coronas) {
+			c->draw(state);
+		}
+	}
+
+	void animate(const float t) {
+		body->setRotationAngle(0.8 * t);
+
+		for (auto c : coronas) {
+			c->animate(t);
+		}
+	}
 };
 
-/**
- * Represents the virtual world
- */
+class AntiBody {
+private:
+	std::vector<VertexData> vertices;
+
+public:
+	AntiBody() { }
+
+	void draw(RenderState state) {
+
+	}
+
+	void animate(const float t) {
+
+	}
+};
+
 class Scene {
 private:
 	Camera camera;
-	std::vector<Object*> objects;
+	//std::vector<Object*> objects;
 	std::vector<Light> lights;
+
+	Virus* virus;
+	AntiBody* antiBody;
 
 public:
 
 	void build() {
+
+		// Camera
+		camera.set(vec3{ 0, 0, 8 }, vec3{ 0, 0, 0 }, vec3{ 0, 1, 0 });
 
 		// Materials
 		Material* material0 = new Material();
@@ -472,23 +543,18 @@ public:
 
 		// Geometries
 		Geometry* sphere = new Sphere();
-		Geometry* tractricoid = new Tractricoid();
+		//Geometry* tractricoid = new Tractricoid();
 
 		Object* sphereObject = new Object(material0, texture2, sphere);
 		sphereObject->setTranslation(vec3{ 3, 1, 0 });
 		sphereObject->setScale(vec3{ 1.0f, 1.0f, 1.0f });
 		sphereObject->setRotationAxis(vec3{ 1, 0, 0 });
-		objects.push_back(sphereObject);
+		//objects.push_back(sphereObject);
 
-		Object* tractiObject = new Object(material0, texture1, tractricoid);
-		tractiObject->setTranslation(vec3{ -4, 3, 0 });
-		tractiObject->setRotationAxis(vec3{ 1, 0, 0 });
-		objects.push_back(tractiObject);
+		virus = new Virus(sphereObject);
 
-		// Camera
-		camera.wEye = vec3{ 0, 0, 8 };
-		camera.wLookat = vec3{ 0, 0, 0 };
-		camera.wVup = vec3{ 0, 1, 0 };
+
+		
 
 		// Lights
 		lights.resize(3);
@@ -511,11 +577,13 @@ public:
 		state.V = camera.V();
 		state.P = camera.P();
 		state.lights = lights;
-		for (auto object : objects) object->draw(state);
+		//for (auto object : objects) object->draw(state);
+		virus->draw(state);
 	}
 
 	void animate(const float t) {
-		for (auto object : objects) object->animate(t);
+		//for (auto object : objects) object->animate(t);
+		virus->animate(t);
 	}
 };
 
