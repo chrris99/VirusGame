@@ -65,6 +65,9 @@ using DualNumber2 = DualNumber<vec2>;
 struct Material {
 	vec3 kd, ks, ka;
 	float shininess;
+
+	Material() { }
+	Material(const vec3& _kd, const vec3& _ks, const vec3& _ka, const float& _shininess = 30) : kd{ _kd }, ka{ _ka }, ks{ _ks }, shininess{ _shininess } { }
 };
 
 struct Light {
@@ -78,12 +81,10 @@ struct Light {
 
 class CheckerBoardTexture : public Texture {
 public:
-	CheckerBoardTexture(const int width, const int height) : Texture() {
+	CheckerBoardTexture(const int width, const int height, const vec4& color1 = vec4{ 1, 1, 0, 1 }, const vec4& color2 = vec4{ 0, 0, 1, 1 }) : Texture() {
 		std::vector<vec4> image(width * height);
-		const vec4& yellow = vec4{ 1, 1, 0, 1 };
-		const vec4& blue = vec4{ 0, 0, 1, 1 };
 		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
-			image[y * width + x] = (x & 1) ^ (y & 1) ? yellow : blue;
+			image[y * width + x] = (x & 1) ^ (y & 1) ? color1 : color2;
 		}
 		create(width, height, image, GL_NEAREST);
 
@@ -95,7 +96,7 @@ public:
 	StripeTexture(const int width, const int height, const vec4& color1 = vec4{ 1, 1, 0, 1 }, const vec4& color2 = vec4{ 0, 0, 1, 1 }) : Texture() {
 		std::vector<vec4> image(width * height);
 		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
-			image[y * width + x] = y % 2 ? color1 : color2;
+			image[y * width + x] = ((1 + sinf(x * 50)) / 2) * color1;
 		}
 		create(width, height, image, GL_NEAREST);
 	}
@@ -371,9 +372,9 @@ public:
 	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
 		U = U * 2.0f * PI_F;
 		V = V * PI_F;
-		X = Cos(U) * Sin(V);
-		Y = Sin(U) * Sin(V);
-		Z = Cos(V);
+		X = Cos(U) * Sin(V) * 2.0f;
+		Y = Sin(U) * Sin(V) * 2.0f;
+		Z = Cos(V) * 2.0f;
 	}
 };
 
@@ -397,7 +398,7 @@ public:
 
 #pragma endregion
 
-class Object {
+class GameObject {
 protected:
 	Material* material;
 	Texture* texture;
@@ -408,9 +409,9 @@ protected:
 	float rotationAngle;
 
 public:
-	Object() { }
+	GameObject() { }
 
-	Object(Material* _material, Texture* _texture, Geometry* _geometry) : scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
+	GameObject(Material* _material, Texture* _texture, Geometry* _geometry) : scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
 		texture = _texture;
 		material = _material;
 		geometry = _geometry;
@@ -441,38 +442,50 @@ public:
 	}
 
 	virtual void animate(const float t) {
-		//rotationAngle = 0.8f * t;
+		rotationAngle = 0.8f * t;
 	}
 };
 
 class Virus {
 private:
-	Object* body;
-	std::vector<Object*> coronas;
+	GameObject* body;
+	std::vector<GameObject*> coronas;
+
+	void createBody() {
+
+	}
 
 	void createCorona() {
+
 		Tractricoid* t = new Tractricoid();
 
 		Material* material0 = new Material();
-		material0->kd = vec3{ 0.6f, 0.4f, 0.2f };
+		material0->kd = vec3{ 0.9f, 0.4f, 0.2f };
 		material0->ks = vec3{ 4, 4, 4 };
-		material0->ka = vec3{ 0.1f, 0.1f, 0.1f };
+		material0->ka = vec3{ 0.3f, 0.3f, 0.3f };
 		material0->shininess = 100;
 
-		Texture* texture1 = new StripeTexture(4, 8);
-
-		Object* corona = new Object(material0, texture1, t);
-		corona->setScale(vec3{ 0.5, 0.5, 0.5 });
+		Texture* texture1 = new StripeTexture(4, 8, vec4{ 1, 0, 0, 1 }, vec4{ 1, 0, 0, 1 });
 		Sphere* s = new Sphere();
-		VertexData v = s->genVertexData(0.0f, 0.0f);
-		
-		corona->setTranslation(v.position + body->getTranslation());
 
-		coronas.push_back(corona);
+		int nStrips = 6;
+		for (int i = 0; i <= nStrips; i++) {
+			int coronaPerStrip = 12 * sinf(PI_F * i / nStrips);
+			for (int j = 0; j <= coronaPerStrip; j++) {
+				GameObject* corona = new GameObject(material0, texture1, t);
+				corona->setScale(vec3{ 0.3f, 0.3f, 0.3f });
+				VertexData v = s->genVertexData((float)j / coronaPerStrip, (float)i / nStrips);
+				vec3 n = normalize(v.normal);
+				corona->setRotationAxis(cross(n, vec3{0, 0, -1}));
+				corona->setRotationAngle(acosf(dot(vec3{0, 0, 1}, n)));
+				corona->setTranslation(1.2f * v.position + body->getTranslation());
+				coronas.push_back(corona);
+			}
+		}
 	}
 
 public:
-	Virus(Object* _body) : body{ _body } {
+	Virus(GameObject* _body) : body{ _body } {
 		createCorona();
 	}
 
@@ -484,11 +497,12 @@ public:
 	}
 
 	void animate(const float t) {
-		body->setRotationAngle(0.8 * t);
-
-		for (auto c : coronas) {
-			c->animate(t);
-		}
+		body->animate(t);
+		//for (auto c : coronas) {
+		//	c->animate(t);
+		//}
+		//body->setRotationAngle(0.8 * t);
+		//createCorona();
 	}
 };
 
@@ -539,22 +553,18 @@ public:
 
 		// Textures
 		Texture* texture1 = new StripeTexture(4, 8);
-		Texture* texture2 = new StripeTexture(15, 20);
+		Texture* texture2 = new StripeTexture(900, 1800);
 
 		// Geometries
 		Geometry* sphere = new Sphere();
 		//Geometry* tractricoid = new Tractricoid();
 
-		Object* sphereObject = new Object(material0, texture2, sphere);
-		sphereObject->setTranslation(vec3{ 3, 1, 0 });
-		sphereObject->setScale(vec3{ 1.0f, 1.0f, 1.0f });
+		GameObject* sphereObject = new GameObject(material0, texture2, sphere);
+		//sphereObject->setScale(vec3{ 1.0f, 1.0f, 1.0f });
 		sphereObject->setRotationAxis(vec3{ 1, 0, 0 });
 		//objects.push_back(sphereObject);
 
 		virus = new Virus(sphereObject);
-
-
-		
 
 		// Lights
 		lights.resize(3);
@@ -577,12 +587,10 @@ public:
 		state.V = camera.V();
 		state.P = camera.P();
 		state.lights = lights;
-		//for (auto object : objects) object->draw(state);
 		virus->draw(state);
 	}
 
 	void animate(const float t) {
-		//for (auto object : objects) object->animate(t);
 		virus->animate(t);
 	}
 };
