@@ -20,6 +20,15 @@
 const int TESSELATION_LEVEL = 30;
 const float PI_F = 3.14159265358979f;
 
+mat4 EntityMatrix() {
+	return mat4{
+		{ 1, 0, 0, 0 },
+		{ 0, 1, 0, 0 },
+		{ 0, 0, 1, 0 },
+		{ 0, 0, 0, 1 }
+	};
+}
+
 #pragma region DualNumber
 
 template<class T>
@@ -96,9 +105,19 @@ public:
 	StripeTexture(const int width, const int height, const vec4& color1 = vec4{ 1, 1, 0, 1 }, const vec4& color2 = vec4{ 0, 0, 1, 1 }) : Texture() {
 		std::vector<vec4> image(width * height);
 		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
-			image[y * width + x] = ((1 + sinf(x * 50)) / 2) * color1;
+			image[y * width + x] = ((1 + sin(x * 50)) / 2) * color1;
 		}
 		create(width, height, image, GL_NEAREST);
+	}
+};
+
+class FadedTexture : public Texture {
+public:
+	FadedTexture(const int width, const int height, const vec4& color = vec4{ 1, 1, 0, 1 }) : Texture() {
+		std::vector<vec4> image(width * height);
+		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
+			image[y * width + x] = y * color;
+		}
 	}
 };
 
@@ -392,10 +411,6 @@ public:
 	}
 };
 
-
-
-
-
 #pragma endregion
 
 class GameObject {
@@ -429,7 +444,7 @@ public:
 		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
 	}
 
-	void draw(RenderState state) {
+	virtual void draw(RenderState state) {
 		mat4 M, Minv;
 		setModelingTransform(M, Minv);
 		state.M = M;
@@ -442,13 +457,13 @@ public:
 	}
 
 	virtual void animate(const float t) {
-		rotationAngle = 0.8f * t;
+		
 	}
 };
 
-class Virus {
+class Virus : public GameObject{
 private:
-	GameObject* body;
+	// Children elements
 	std::vector<GameObject*> coronas;
 
 	void createBody() {
@@ -465,7 +480,7 @@ private:
 		material0->ka = vec3{ 0.3f, 0.3f, 0.3f };
 		material0->shininess = 100;
 
-		Texture* texture1 = new StripeTexture(4, 8, vec4{ 1, 0, 0, 1 }, vec4{ 1, 0, 0, 1 });
+		Texture* texture1 = new FadedTexture(400, 800, vec4{ 1, 0, 0, 1 });
 		Sphere* s = new Sphere();
 
 		int nStrips = 6;
@@ -478,32 +493,36 @@ private:
 				vec3 n = normalize(v.normal);
 				corona->setRotationAxis(cross(n, vec3{0, 0, -1}));
 				corona->setRotationAngle(acosf(dot(vec3{0, 0, 1}, n)));
-				corona->setTranslation(1.2f * v.position + body->getTranslation());
+				corona->setTranslation(1.2f * v.position + this->getTranslation());
 				coronas.push_back(corona);
 			}
 		}
 	}
 
 public:
-	Virus(GameObject* _body) : body{ _body } {
+	Virus(Material* _material, Texture* _texture, Geometry* _geometry) : GameObject{ _material, _texture, _geometry } {
 		createCorona();
 	}
 
-	void draw(RenderState state) {
-		body->draw(state);
-		for (auto c : coronas) {
-			c->draw(state);
+	void draw(RenderState state) override {
+		mat4 M, Minv;
+		setModelingTransform(M, Minv);
+		state.M = M * state.M;
+		state.Minv = state.Minv * Minv;
+		state.MVP = state.M * state.V * state.P;
+		state.material = material;
+		state.texture = texture;
+		gpuProgram->bind(state);
+		geometry->draw();
+		for (GameObject* child : coronas) {
+			child->draw(state);
 		}
 	}
 
-	void animate(const float t) {
-		body->animate(t);
-		//for (auto c : coronas) {
-		//	c->animate(t);
-		//}
-		//body->setRotationAngle(0.8 * t);
-		//createCorona();
+	void animate(const float t) override {
+
 	}
+
 };
 
 class AntiBody {
@@ -559,12 +578,13 @@ public:
 		Geometry* sphere = new Sphere();
 		//Geometry* tractricoid = new Tractricoid();
 
-		GameObject* sphereObject = new GameObject(material0, texture2, sphere);
+		//GameObject* sphereObject = new GameObject(material0, texture2, sphere);
 		//sphereObject->setScale(vec3{ 1.0f, 1.0f, 1.0f });
-		sphereObject->setRotationAxis(vec3{ 1, 0, 0 });
+		//sphereObject->setRotationAxis(vec3{ 1, 0, 0 });
 		//objects.push_back(sphereObject);
 
-		virus = new Virus(sphereObject);
+		virus = new Virus(material0, texture2, sphere);
+		virus->setRotationAxis(vec3{ 1, 0, 0 });
 
 		// Lights
 		lights.resize(3);
@@ -586,6 +606,8 @@ public:
 		state.wEye = camera.wEye;
 		state.V = camera.V();
 		state.P = camera.P();
+		state.M = EntityMatrix();
+		state.Minv = EntityMatrix();
 		state.lights = lights;
 		virus->draw(state);
 	}
