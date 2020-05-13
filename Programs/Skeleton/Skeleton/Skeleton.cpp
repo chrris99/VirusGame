@@ -14,20 +14,20 @@
 // Tudomasul veszem, hogy a forrasmegjeloles kotelmenek megsertese eseten a hazifeladatra adhato pontokat
 // negativ elojellel szamoljak el es ezzel parhuzamosan eljaras is indul velem szemben.
 //=============================================================================================
+// Forrasmegjeloles:
+// A proceduralis texturazashoz az alabbi weboldalon talalhato informaciokat hasznaltam fel:
+// http://www.upvector.com/?section=Tutorials&subsection=Intro%20to%20Procedural%20Textures&fbclid=IwAR0ZCaVUZh5mMhdhRLjruAKESTfuczaR-qGTDDGOlVQQvr6MJOb1CDwMJ70
+//=============================================================================================
 
 #include "framework.h"
 
+#pragma region Constants
+
 const int TESSELATION_LEVEL = 30;
 const float PI_F = 3.14159265358979f;
+const mat4 ENTITY_MATRIX = mat4{ { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } };
 
-mat4 EntityMatrix() {
-	return mat4{
-		{ 1, 0, 0, 0 },
-		{ 0, 1, 0, 0 },
-		{ 0, 0, 1, 0 },
-		{ 0, 0, 0, 1 }
-	};
-}
+#pragma endregion
 
 #pragma region DualNumber
 
@@ -96,7 +96,6 @@ public:
 			image[y * width + x] = (x & 1) ^ (y & 1) ? color1 : color2;
 		}
 		create(width, height, image, GL_NEAREST);
-
 	}
 };
 
@@ -105,7 +104,7 @@ public:
 	StripeTexture(const int width, const int height, const vec4& color1 = vec4{ 1, 1, 0, 1 }, const vec4& color2 = vec4{ 0, 0, 1, 1 }) : Texture() {
 		std::vector<vec4> image(width * height);
 		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
-			image[y * width + x] = ((1 + sin(x * 50)) / 2) * color1;
+			image[y * width + x] = ((1 + sin(x * 50.0)) / 2) * color1;
 		}
 		create(width, height, image, GL_NEAREST);
 	}
@@ -118,12 +117,13 @@ public:
 		for (int x = 0; x < width; x++) for (int y = 0; y < height; y++) {
 			image[y * width + x] = y * color;
 		}
+		create(width, height, image, GL_NEAREST);
 	}
 };
 
 #pragma endregion
 
-#pragma region Shaders
+#pragma region Shader
 
 struct RenderState {
 	mat4 MVP, M, Minv, V, P;
@@ -319,6 +319,7 @@ public:
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 	}
 
+	virtual void create(const float t = 0, const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) = 0;
 	virtual void draw() = 0;
 
 	~Geometry() {
@@ -327,25 +328,46 @@ public:
 	}
 };
 
+class TriangleMesh : public Geometry {
+	std::vector<VertexData> mesh;
+
+	void create(const float t = 0, const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) override {
+
+
+
+		glBufferData(GL_ARRAY_BUFFER, mesh.size() * sizeof(VertexData), &mesh[0], GL_STATIC_DRAW);
+
+		glEnableVertexAttribArray(0);  // attribute array 0 = POSITION
+		glEnableVertexAttribArray(1);  // attribute array 1 = NORMAL
+		glEnableVertexAttribArray(2);  // attribute array 2 = TEXCOORD0
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, position)));
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, normal)));
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexData), reinterpret_cast<void*>(offsetof(VertexData, textureCoordinate)));
+	}
+
+	void draw() override {
+		glBindVertexArray(vao);
+		glDrawArrays(GL_TRIANGLES, 0, mesh.size());
+	}
+};
+
 class ParametricSurface : public Geometry {
 private:
 	unsigned int vertexPerStrip, nStrips;
 
 public:
-	ParametricSurface() {
-		vertexPerStrip = 0;
-		nStrips = 0;
-	}
+	ParametricSurface() : vertexPerStrip{ 0 }, nStrips{ 0 } { }
 
-	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) = 0;
+	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t = 0) = 0;
 
-	VertexData genVertexData(const float u, const float v) {
+	VertexData genVertexData(const float u, const float v, const float t = 0) {
 		VertexData vertexData;
 		vertexData.textureCoordinate = vec2(u, v);
 
 		DualNumber2 X, Y, Z;
 		DualNumber2 U(u, vec2(1, 0)), V(v, vec2(0, 1));
-		evaluate(U, V, X, Y, Z);
+		evaluate(U, V, X, Y, Z, t);
 
 		vertexData.position = vec3(X.funcVal, Y.funcVal, Z.funcVal);
 		vertexData.normal = cross(vec3{ X.derivative.x, Y.derivative.x, Z.derivative.x }, vec3{ X.derivative.y, Y.derivative.y, Z.derivative.y });
@@ -353,15 +375,15 @@ public:
 		return vertexData;
 	}
 	
-	void create(const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) {
+	void create(const float t = 0, const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) override {
 		vertexPerStrip = (M + 1) * 2;
 		nStrips = N;
 		std::vector<VertexData> vertices;
 		
 		for (int i = 0; i < N; i++) {
 			for (int j = 0; j <= M; j++) {
-				vertices.push_back(genVertexData((float)j / M, (float)i / N));
-				vertices.push_back(genVertexData((float)j / M, (float)(i + 1) / N));
+				vertices.push_back(genVertexData((float)j / M, (float)i / N, t));
+				vertices.push_back(genVertexData((float)j / M, (float)(i + 1) / N, t));
 			}
 		}
 
@@ -388,7 +410,7 @@ class Sphere : public ParametricSurface {
 public:
 	Sphere() { create(); }
 
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override {
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t = 0) override {
 		U = U * 2.0f * PI_F;
 		V = V * PI_F;
 		X = Cos(U) * Sin(V) * 2.0f;
@@ -401,8 +423,8 @@ class Tractricoid final : public ParametricSurface {
 public:
 	Tractricoid() { create(); }
 
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z) override final {
-		const float height = 3.0f;
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t = 0) override final {
+		const float height = 4.0f;
 		U = U * height;
 		V = V * 2.0f * PI_F;
 		X = Cos(V) / Cosh(U);
@@ -412,6 +434,8 @@ public:
 };
 
 #pragma endregion
+
+#pragma region Object
 
 class GameObject {
 protected:
@@ -424,7 +448,6 @@ protected:
 	float rotationAngle;
 
 public:
-	GameObject() { }
 
 	GameObject(Material* _material, Texture* _texture, Geometry* _geometry) : scale{ vec3{ 1, 1, 1 } }, translation{ vec3{ 0, 0, 0 } }, rotationAxis{ vec3{ 0, 0, 1 } }, rotationAngle{ 0 } {
 		texture = _texture;
@@ -438,8 +461,11 @@ public:
 	void setRotationAngle(const float& _angle) { rotationAngle = _angle; }
 
 	vec3 getTranslation() { return translation; }
+	Geometry* getGeometry() { return geometry; }
+	Material* getMaterial() { return material; }
+	Texture* getTexture() { return texture; }
 
-	void setModelingTransform(mat4& M, mat4& Minv) {
+	virtual void setModelingTransform(mat4& M, mat4& Minv) {
 		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
 		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
 	}
@@ -466,13 +492,12 @@ private:
 	// Children elements
 	std::vector<GameObject*> coronas;
 
-	void createBody() {
+	vec3 pivotAxis;
+	float pivotAngle;
 
-	}
+	void createCorona(const float t = 0) {
 
-	void createCorona() {
-
-		Tractricoid* t = new Tractricoid();
+		Tractricoid* trac = new Tractricoid();
 
 		Material* material0 = new Material();
 		material0->kd = vec3{ 0.9f, 0.4f, 0.2f };
@@ -480,16 +505,16 @@ private:
 		material0->ka = vec3{ 0.3f, 0.3f, 0.3f };
 		material0->shininess = 100;
 
-		Texture* texture1 = new FadedTexture(400, 800, vec4{ 1, 0, 0, 1 });
+		Texture* texture1 = new FadedTexture(4, 8, vec4{ 1, 0, 0, 1 });
 		Sphere* s = new Sphere();
 
-		int nStrips = 6;
+		int nStrips = 10;
 		for (int i = 0; i <= nStrips; i++) {
-			int coronaPerStrip = 12 * sinf(PI_F * i / nStrips);
+			int coronaPerStrip = 20 * sinf(PI_F * i / nStrips);
 			for (int j = 0; j <= coronaPerStrip; j++) {
-				GameObject* corona = new GameObject(material0, texture1, t);
-				corona->setScale(vec3{ 0.3f, 0.3f, 0.3f });
-				VertexData v = s->genVertexData((float)j / coronaPerStrip, (float)i / nStrips);
+				GameObject* corona = new GameObject(material0, texture1, trac);
+				corona->setScale(vec3{ 0.18f, 0.18f, 0.18f });
+				VertexData v = s->genVertexData((float)j / coronaPerStrip, (float)i / nStrips, t);
 				vec3 n = normalize(v.normal);
 				corona->setRotationAxis(cross(n, vec3{0, 0, -1}));
 				corona->setRotationAngle(acosf(dot(vec3{0, 0, 1}, n)));
@@ -502,25 +527,41 @@ private:
 public:
 	Virus(Material* _material, Texture* _texture, Geometry* _geometry) : GameObject{ _material, _texture, _geometry } {
 		createCorona();
+		pivotAngle = cosf(0);
+		pivotAxis = normalize(vec3{sinf(0), sinf(0), sinf(0)});
 	}
 
+	void setModelingTransform(mat4& M, mat4& Minv) override {
+		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
+		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
+	}
+
+	void setPivotAxis(const vec3& _axis) { pivotAxis = _axis; }
+	void setPivotAngle(const float& _angle) { pivotAngle = _angle; }
+
 	void draw(RenderState state) override {
-		mat4 M, Minv;
+		mat4 M, Minv, Mt, Mtinv;
 		setModelingTransform(M, Minv);
-		state.M = M * state.M;
-		state.Minv = state.Minv * Minv;
-		state.MVP = state.M * state.V * state.P;
-		state.material = material;
-		state.texture = texture;
-		gpuProgram->bind(state);
-		geometry->draw();
-		for (GameObject* child : coronas) {
-			child->draw(state);
+
+		GameObject::draw(state);
+
+		for (GameObject* c : coronas) {
+			c->setModelingTransform(Mt, Mtinv);
+			// Parent-child relationship
+			state.M = Mt * M;
+			state.Minv = Minv * Mtinv;
+			state.MVP = state.M * state.V * state.P;
+			state.material = c->getMaterial();
+			state.texture = c->getTexture();
+			gpuProgram->bind(state);
+			c->getGeometry()->draw();
 		}
 	}
 
 	void animate(const float t) override {
-
+		this->setRotationAngle(0.8 * t);
+		//this->setTranslation(length(translation) * vec3{ sinf(t / 2), sinf(t / 3), sinf(t / 5) });
+		this->setScale(vec3{ sinf(t/2) * sinf(t/2) + 0.5f, sinf(t/2) * sinf(t/2) + 0.5f, sinf(t/2) * sinf(t/2) + 0.5f });
 	}
 
 };
@@ -532,6 +573,10 @@ private:
 public:
 	AntiBody() { }
 
+	VertexData genVertexData() {
+
+	}
+
 	void draw(RenderState state) {
 
 	}
@@ -541,28 +586,29 @@ public:
 	}
 };
 
+#pragma endregion
+
+#pragma region Scene
+
 class Scene {
 private:
 	Camera camera;
-	//std::vector<Object*> objects;
+	std::vector<GameObject*> objects;
 	std::vector<Light> lights;
-
-	Virus* virus;
-	AntiBody* antiBody;
 
 public:
 
 	void build() {
 
 		// Camera
-		camera.set(vec3{ 0, 0, 8 }, vec3{ 0, 0, 0 }, vec3{ 0, 1, 0 });
+		camera.set(vec3{ 0, 0, 10 }, vec3{ 0, 0, 0 }, vec3{ 0, 1, 0 });
 
 		// Materials
 		Material* material0 = new Material();
 		material0->kd = vec3{ 0.6f, 0.4f, 0.2f };
-		material0->ks = vec3{ 4, 4, 4 };
+		material0->ks = vec3{ 2, 2, 2 };
 		material0->ka = vec3{ 0.1f, 0.1f, 0.1f };
-		material0->shininess = 100;
+		material0->shininess = 50;
 
 		Material* material1 = new Material();
 		material1->kd = vec3{ 0.8f, 0.6f, 0.4f };
@@ -570,35 +616,36 @@ public:
 		material1->ka = vec3{ 0.2f, 0.2f, 0.2f };
 		material1->shininess = 30;
 
-		// Textures
-		Texture* texture1 = new StripeTexture(4, 8);
-		Texture* texture2 = new StripeTexture(900, 1800);
-
-		// Geometries
-		Geometry* sphere = new Sphere();
-		//Geometry* tractricoid = new Tractricoid();
-
-		//GameObject* sphereObject = new GameObject(material0, texture2, sphere);
-		//sphereObject->setScale(vec3{ 1.0f, 1.0f, 1.0f });
-		//sphereObject->setRotationAxis(vec3{ 1, 0, 0 });
-		//objects.push_back(sphereObject);
-
-		virus = new Virus(material0, texture2, sphere);
-		virus->setRotationAxis(vec3{ 1, 0, 0 });
-
 		// Lights
 		lights.resize(3);
 		lights[0].wLightPos = vec4{ 5, 5, 4, 0 };
-		lights[0].La = vec3{ 0.1f, 0.1f, 1 };
-		lights[0].Le = vec3{ 3, 0, 0 };
+		lights[0].La = vec3{ 0.1f, 0.1f, 0.1f };
+		lights[0].Le = vec3{ 1, 1, 1 };
 
 		lights[1].wLightPos = vec4{ 5, 10, 20, 0 };
 		lights[1].La = vec3{ 0.2f, 0.2f, 0.2f };
-		lights[1].Le = vec3{ 0, 3, 0 };
+		lights[1].Le = vec3{ 1, 1, 1 };
 
 		lights[2].wLightPos = vec4{ -5, 5, 5, 0 };
 		lights[2].La = vec3{ 0.1f, 0.1f, 0.1f };
-		lights[2].Le = vec3{ 0, 0, 3 };
+		lights[2].Le = vec3{ 1, 1, 1 };
+
+		// Textures
+		Texture* roomTexture = new CheckerBoardTexture(4, 8, vec4{ 1, 0, 1, 1 }, vec4{ 1, 0, 1, 1 });
+		Texture* virusTexture = new StripeTexture(800, 1600);
+
+		// Geometries
+		Geometry* sphere = new Sphere();
+
+		// Objects
+		GameObject* room = new GameObject(material1, roomTexture, sphere);
+		room->setScale(vec3{5.0f, 5.0f, 5.0f});
+		objects.push_back(room);
+
+		GameObject* virus = new Virus(material0, virusTexture, sphere);
+		virus->setRotationAxis(vec3{ 1, 0, 0 });	
+		objects.push_back(virus);
+
 	}
 
 	void render() {
@@ -606,18 +653,25 @@ public:
 		state.wEye = camera.wEye;
 		state.V = camera.V();
 		state.P = camera.P();
-		state.M = EntityMatrix();
-		state.Minv = EntityMatrix();
+		state.M = ENTITY_MATRIX;
+		state.Minv = ENTITY_MATRIX;
 		state.lights = lights;
-		virus->draw(state);
+
+		for (auto object : objects) {
+			object->draw(state);
+		}
 	}
 
 	void animate(const float t) {
-		virus->animate(t);
+		for (auto object : objects) {
+			object->animate(t);
+		}
 	}
 };
 
 Scene scene;
+
+#pragma endregion
 
 # pragma region EventHandling
 
@@ -660,7 +714,7 @@ void onIdle() {
 	tend = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
 	
 	for (float t = tstart; t < tend; t += dt) {
-		float Dt = fmin(dt, tend - t);
+		float Dt = fminf(dt, tend - t);
 		scene.animate(t);
 	}
 
@@ -669,3 +723,4 @@ void onIdle() {
 }
 
 #pragma endregion
+	
