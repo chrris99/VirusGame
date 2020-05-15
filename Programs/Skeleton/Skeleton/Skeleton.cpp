@@ -27,6 +27,37 @@ const int TESSELATION_LEVEL = 30;
 const float PI_F = 3.14159265358979f;
 const mat4 ENTITY_MATRIX = mat4{ { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } };
 
+// ASCII codes for used characters
+const int x_KEY = 120;
+const int y_KEY = 121;
+const int z_KEY = 122;
+
+const int X_KEY = 88;
+const int Y_KEY = 89;
+const int Z_KEY = 90;
+
+#pragma endregion
+
+#pragma region Input
+
+struct Input {
+	bool glutKeyTable[256];
+
+	Input() {
+		for (int i = 0; i < 256; i++) glutKeyTable[i] = false;
+	}
+
+	bool GetKeyStatus(int keyCode) { return glutKeyTable[keyCode]; }
+};
+
+Input input;
+
+#pragma endregion
+
+#pragma region Utility
+
+
+
 #pragma endregion
 
 #pragma region DualNumber
@@ -68,6 +99,7 @@ template<class T> DualNumber<T> Tanh(DualNumber<T> g) { return Sinh(g) / Cosh(g)
 using DualNumber2 = DualNumber<vec2>;
 
 #pragma endregion
+
 
 #pragma region Material and Light
 
@@ -304,6 +336,9 @@ public:
 struct VertexData {
 	vec3 position, normal;
 	vec2 textureCoordinate;
+
+	VertexData() { }
+	VertexData(vec3 _pos, vec3 _norm, vec2 _tex) : position{ _pos }, normal{ _norm }, textureCoordinate{ _tex } { }
 };
 
 class Geometry {
@@ -328,14 +363,95 @@ public:
 	}
 };
 
-class TriangleMesh : public Geometry {
-	std::vector<VertexData> mesh;
+class RecursiveTetrahedron : public Geometry {
+private:
+	std::vector<VertexData> vertices;
+	float length;
+	float height;
+
+	vec3 getNormalVector(VertexData& v1, VertexData& v2, VertexData& v3) const {
+		return cross(normalize(v1.position - v2.position), normalize(v1.position - v3.position));
+	}
+
+	vec3 getEdgeMidpoint(const VertexData& v1, const VertexData& v2) const {
+		return vec3{ (v1.position.x + v2.position.x) / 2, (v1.position.y + v2.position.y) / 2 , (v1.position.z + v2.position.z) / 2 };
+	}
+
+	vec3 getTriangleCentroid(const VertexData& v1, const VertexData& v2, const VertexData& v3) const {
+		return vec3{ (v1.position.x + v2.position.x + v3.position.x) / 3, (v1.position.y + v2.position.y + v3.position.y) / 3, (v1.position.z + v2.position.z + v3.position.z) / 3 };
+	}
+
+	void getNewTetrahedron(VertexData& vertex1, VertexData& vertex2, VertexData& vertex3, int depth = 0) {
+
+		if (depth > 1) return;
+
+		VertexData nt1 = { getEdgeMidpoint(vertex1, vertex2), vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+		VertexData nt2 = { getEdgeMidpoint(vertex2, vertex3), vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+		VertexData nt3 = { getEdgeMidpoint(vertex3, vertex1), vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+		VertexData nt4 = { getTriangleCentroid(vertex1, vertex2, vertex3) + normalize(getNormalVector(vertex1, vertex2, vertex3)) * height * 1 / (depth + 3), vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+
+		nt1.normal = nt2.normal = nt4.normal = getNormalVector(nt1, nt2, nt4);
+
+		vertices.push_back(nt1);
+		vertices.push_back(nt2);
+		vertices.push_back(nt4);
+
+		nt2.normal = nt3.normal = nt4.normal = getNormalVector(nt2, nt3, nt4);
+
+		vertices.push_back(nt2);
+		vertices.push_back(nt3);
+		vertices.push_back(nt4);
+
+		nt1.normal = nt3.normal = nt4.normal = getNormalVector(nt1, nt3, nt4);
+
+		vertices.push_back(nt1);
+		vertices.push_back(nt3);
+		vertices.push_back(nt4);
+
+		getNewTetrahedron(nt2, nt1, nt3, depth + 1);
+		getNewTetrahedron(nt1, nt2, nt4, depth + 1);
+		getNewTetrahedron(nt3, nt1, nt4, depth + 1);
+		getNewTetrahedron(nt2, nt3, nt4, depth + 1);
+	}
+
+public:
+
+	RecursiveTetrahedron(const float _length = 1.0f, const float _height = 1.0f) : length{ _length }, height{ _height } { create(); }
+
+	void init() {
+		float x = sqrtf(3) / 3 * length;
+		float d = sqrtf(3) / 6 * length;
+
+		VertexData vertex1{ vec3{ x, 0, 0 }, vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+		VertexData vertex2{ vec3{ -d, length / 2, 0 }, vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+		VertexData vertex3{ vec3{ -d, -length / 2, 0 }, vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+		VertexData vertex4{ vec3{0, 0, 1.0f}, vec3{ 0, 0, 1 }, vec2{ 1, 1 } };
+
+		vertex1.normal = vertex2.normal = vertex3.normal = getNormalVector(vertex2, vertex1, vertex3);
+		vertices.push_back(vertex1); vertices.push_back(vertex2); vertices.push_back(vertex3);
+
+		vertex1.normal = vertex2.normal = vertex4.normal = getNormalVector(vertex1, vertex2, vertex4);
+		vertices.push_back(vertex1); vertices.push_back(vertex2); vertices.push_back(vertex4);
+
+		vertex2.normal = vertex3.normal = vertex4.normal = getNormalVector(vertex2, vertex3, vertex4);
+		vertices.push_back(vertex2); vertices.push_back(vertex3); vertices.push_back(vertex4);
+
+		vertex1.normal = vertex3.normal = vertex4.normal = getNormalVector(vertex3, vertex1, vertex4);
+		vertices.push_back(vertex1); vertices.push_back(vertex3); vertices.push_back(vertex4);
+
+		getNewTetrahedron(vertex2, vertex1, vertex3);
+		getNewTetrahedron(vertex1, vertex2, vertex4);
+		getNewTetrahedron(vertex3, vertex1, vertex4);
+		getNewTetrahedron(vertex2, vertex3, vertex4);
+	}
+
+	void setHeight(float _height) { height = _height; }
 
 	void create(const float t = 0, const int N = TESSELATION_LEVEL, const int M = TESSELATION_LEVEL) override {
 
+		init();
 
-
-		glBufferData(GL_ARRAY_BUFFER, mesh.size() * sizeof(VertexData), &mesh[0], GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(VertexData), &vertices[0], GL_STATIC_DRAW);
 
 		glEnableVertexAttribArray(0);  // attribute array 0 = POSITION
 		glEnableVertexAttribArray(1);  // attribute array 1 = NORMAL
@@ -348,7 +464,7 @@ class TriangleMesh : public Geometry {
 
 	void draw() override {
 		glBindVertexArray(vao);
-		glDrawArrays(GL_TRIANGLES, 0, mesh.size());
+		glDrawArrays(GL_TRIANGLES, 0, vertices.size());
 	}
 };
 
@@ -359,9 +475,9 @@ private:
 public:
 	ParametricSurface() : vertexPerStrip{ 0 }, nStrips{ 0 } { }
 
-	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t = 0) = 0;
+	virtual void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t) = 0;
 
-	VertexData genVertexData(const float u, const float v, const float t = 0) {
+	VertexData genVertexData(const float u, const float v, const float t) {
 		VertexData vertexData;
 		vertexData.textureCoordinate = vec2(u, v);
 
@@ -379,7 +495,7 @@ public:
 		vertexPerStrip = (M + 1) * 2;
 		nStrips = N;
 		std::vector<VertexData> vertices;
-		
+
 		for (int i = 0; i < N; i++) {
 			for (int j = 0; j <= M; j++) {
 				vertices.push_back(genVertexData((float)j / M, (float)i / N, t));
@@ -406,24 +522,41 @@ public:
 	}
 };
 
-class Sphere : public ParametricSurface {
+class Sphere  : public ParametricSurface {
+private:
+	virtual DualNumber2 R(DualNumber2& U, DualNumber2& V, const float t) {
+		return 1.0f;
+	}
+
 public:
 	Sphere() { create(); }
 
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t = 0) override {
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t) override final {
 		U = U * 2.0f * PI_F;
 		V = V * PI_F;
-		X = Cos(U) * Sin(V) * 2.0f;
-		Y = Sin(U) * Sin(V) * 2.0f;
-		Z = Cos(V) * 2.0f;
+		X = Cos(U) * Sin(V) * 2.0f * R(U, V, t);
+		Y = Sin(U) * Sin(V) * 2.0f * R(U, V, t);
+		Z = Cos(V) * 2.0f * R(U, V, t);
 	}
+};
+
+class AngrySphere final : public Sphere {
+private:
+	DualNumber2 R(DualNumber2& U, DualNumber2& V, const float t) override final {
+		float time = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+		return Sin(Cos(Sin(Cos(U + DualNumber2(3.0f) * V + 3.0f * time))));
+		//return 1.0f + t;
+	}
+
+public:
+	AngrySphere() { create(); }
 };
 
 class Tractricoid final : public ParametricSurface {
 public:
 	Tractricoid() { create(); }
 
-	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t = 0) override final {
+	void evaluate(DualNumber2& U, DualNumber2& V, DualNumber2& X, DualNumber2& Y, DualNumber2& Z, const float t) override final {
 		const float height = 4.0f;
 		U = U * height;
 		V = V * 2.0f * PI_F;
@@ -482,18 +615,13 @@ public:
 		geometry->draw();
 	}
 
-	virtual void animate(const float t) {
-		
-	}
+	virtual void animate(const float t) { }
 };
 
-class Virus : public GameObject{
+class Virus final : public GameObject{
 private:
 	// Children elements
 	std::vector<GameObject*> coronas;
-
-	vec3 pivotAxis;
-	float pivotAngle;
 
 	void createCorona(const float t = 0) {
 
@@ -506,7 +634,7 @@ private:
 		material0->shininess = 100;
 
 		Texture* texture1 = new FadedTexture(4, 8, vec4{ 1, 0, 0, 1 });
-		Sphere* s = new Sphere();
+		Sphere* s = new AngrySphere();
 
 		int nStrips = 10;
 		for (int i = 0; i <= nStrips; i++) {
@@ -527,27 +655,21 @@ private:
 public:
 	Virus(Material* _material, Texture* _texture, Geometry* _geometry) : GameObject{ _material, _texture, _geometry } {
 		createCorona();
-		pivotAngle = cosf(0);
-		pivotAxis = normalize(vec3{sinf(0), sinf(0), sinf(0)});
 	}
 
-	void setModelingTransform(mat4& M, mat4& Minv) override {
+	void setModelingTransform(mat4& M, mat4& Minv) override final {
 		M = ScaleMatrix(scale) * RotationMatrix(rotationAngle, rotationAxis) * TranslateMatrix(translation);
 		Minv = TranslateMatrix(-translation) * RotationMatrix(-rotationAngle, rotationAxis) * ScaleMatrix(vec3{ 1 / scale.x, 1 / scale.y, 1 / scale.z });
 	}
 
-	void setPivotAxis(const vec3& _axis) { pivotAxis = _axis; }
-	void setPivotAngle(const float& _angle) { pivotAngle = _angle; }
-
-	void draw(RenderState state) override {
-		mat4 M, Minv, Mt, Mtinv;
+	void draw(RenderState state) override final {
+		mat4 M, Minv;
 		setModelingTransform(M, Minv);
-
 		GameObject::draw(state);
 
+		mat4 Mt, Mtinv;
 		for (GameObject* c : coronas) {
 			c->setModelingTransform(Mt, Mtinv);
-			// Parent-child relationship
 			state.M = Mt * M;
 			state.Minv = Minv * Mtinv;
 			state.MVP = state.M * state.V * state.P;
@@ -559,30 +681,35 @@ public:
 	}
 
 	void animate(const float t) override {
+		this->geometry->create(t);
 		this->setRotationAngle(0.8 * t);
-		//this->setTranslation(length(translation) * vec3{ sinf(t / 2), sinf(t / 3), sinf(t / 5) });
-		this->setScale(vec3{ sinf(t/2) * sinf(t/2) + 0.5f, sinf(t/2) * sinf(t/2) + 0.5f, sinf(t/2) * sinf(t/2) + 0.5f });
+		//this->setScale(vec3{ sinf(t/4) * sinf(t/4) + 0.3f, sinf(t/4) * sinf(t/4) + 0.3f, sinf(t/4) * sinf(t/4) + 0.3f });
 	}
 
 };
 
-class AntiBody {
-private:
-	std::vector<VertexData> vertices;
-
+class AntiBody final : public GameObject {
 public:
-	AntiBody() { }
+	AntiBody(Material* _material, Texture* _texture, Geometry* _geometry) : GameObject{ _material, _texture, _geometry } { }
 
-	VertexData genVertexData() {
+	void animate(const float t) override {
 
-	}
+		delete geometry;
+		geometry = new RecursiveTetrahedron(1.0f, sinf(t) + 1.0f);
 
-	void draw(RenderState state) {
-
-	}
-
-	void animate(const float t) {
-
+		// Brown movement
+		if (((int)(100 * t) % 10) == 0) {
+			
+			if (input.glutKeyTable[x_KEY]) {
+				translation = translation + vec3(1.0f, 0.0f, 0.0f) * 0.05;
+			}
+			else if (input.glutKeyTable[X_KEY]) {
+				translation = translation + vec3(-1.0f, 0.0f, 0.0f) * 0.05;
+			}
+			else {
+				translation = translation + vec3(rand() % 3 - 1, rand() % 3 - 1, rand() % 3 - 1) * 0.05;
+			}
+		}
 	}
 };
 
@@ -601,7 +728,7 @@ public:
 	void build() {
 
 		// Camera
-		camera.set(vec3{ 0, 0, 10 }, vec3{ 0, 0, 0 }, vec3{ 0, 1, 0 });
+		camera.set(vec3{ 0, 0, 8 }, vec3{ 0, 0, 0 }, vec3{ 0, 1, 0 });
 
 		// Materials
 		Material* material0 = new Material();
@@ -631,20 +758,34 @@ public:
 		lights[2].Le = vec3{ 1, 1, 1 };
 
 		// Textures
-		Texture* roomTexture = new CheckerBoardTexture(4, 8, vec4{ 1, 0, 1, 1 }, vec4{ 1, 0, 1, 1 });
+		Texture* roomTexture = new CheckerBoardTexture(4, 8, vec4{ 1.0f, 0.0f, 1.0f, 1.0f }, vec4{ 1.0f, 0.0f, 1.0f, 1.0f });
 		Texture* virusTexture = new StripeTexture(800, 1600);
+		Texture* antiBodyTexture = new CheckerBoardTexture(4, 8, vec4{ 1.0f, 1.0f, 1.0f, 1.0f }, vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
 
 		// Geometries
 		Geometry* sphere = new Sphere();
+		Geometry* angrySphere = new AngrySphere();
+		Geometry* tetrahedron = new RecursiveTetrahedron();
 
 		// Objects
+
+		// Room
 		GameObject* room = new GameObject(material1, roomTexture, sphere);
-		room->setScale(vec3{5.0f, 5.0f, 5.0f});
+		room->setScale(vec3{ 5.0f, 5.0f, 5.0f });
 		objects.push_back(room);
 
-		GameObject* virus = new Virus(material0, virusTexture, sphere);
-		virus->setRotationAxis(vec3{ 1, 0, 0 });	
+		// Virus
+		GameObject* virus = new Virus(material0, virusTexture, angrySphere);
+		virus->setRotationAxis(vec3{ 1.0f, 0.0f, 0.0f });	
+		virus->setTranslation(vec3{ -2.0f, -2.0f, 0.0f });
 		objects.push_back(virus);
+
+		// Antibody
+		GameObject* antiBody = new AntiBody(material0, antiBodyTexture, tetrahedron);
+		antiBody->setRotationAxis(vec3{ 1.0f, 0.0f, 0.0f });
+		antiBody->setScale(vec3{ 1.5f, 1.5f, 1.5f });
+		antiBody->setTranslation(vec3{ 1.0f, 1.0f, 0.0f });
+		objects.push_back(antiBody);
 
 	}
 
@@ -696,9 +837,13 @@ void onDisplay() {
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
 
-void onKeyboard(unsigned char key, int pX, int pY) { }
+void onKeyboard(unsigned char key, int pX, int pY) { 
+	input.glutKeyTable[key] = true;
+}
 
-void onKeyboardUp(unsigned char key, int pX, int pY) { }
+void onKeyboardUp(unsigned char key, int pX, int pY) { 
+	input.glutKeyTable[key] = false;
+}
 
 void onMouseMotion(int pX, int pY) { }
 
